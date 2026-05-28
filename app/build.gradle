@@ -1,0 +1,22 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "my.boxman"
+    compileSdk 34
+    useLibrary "org.apache.http.legacy"
+
+    defaultConfig {
+        applicationId "my.boxman"
+        minSdk 23
+        targetSdk 28
+        versionCode 10
+        versionName "9.89-festival-fix1"
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ["*.jar"], dir: "libs")
+    implementation project(":festival-solver")
+}
