@@ -51,6 +51,51 @@ static std::string read_text_file(const std::string &path) {
     return buffer.str();
 }
 
+class StdioRedirect {
+public:
+    explicit StdioRedirect(const std::string &path) {
+        out_dup_ = dup(STDOUT_FILENO);
+        err_dup_ = dup(STDERR_FILENO);
+        file_ = std::fopen(path.c_str(), "wb");
+        if (file_ == nullptr) return;
+        std::fflush(stdout);
+        std::fflush(stderr);
+        dup2(fileno(file_), STDOUT_FILENO);
+        dup2(fileno(file_), STDERR_FILENO);
+    }
+
+    ~StdioRedirect() {
+        restore();
+    }
+
+    void restore() {
+        if (restored_) return;
+        std::fflush(stdout);
+        std::fflush(stderr);
+        if (out_dup_ >= 0) {
+            dup2(out_dup_, STDOUT_FILENO);
+            close(out_dup_);
+            out_dup_ = -1;
+        }
+        if (err_dup_ >= 0) {
+            dup2(err_dup_, STDERR_FILENO);
+            close(err_dup_);
+            err_dup_ = -1;
+        }
+        if (file_ != nullptr) {
+            std::fclose(file_);
+            file_ = nullptr;
+        }
+        restored_ = true;
+    }
+
+private:
+    int out_dup_ = -1;
+    int err_dup_ = -1;
+    FILE *file_ = nullptr;
+    bool restored_ = false;
+};
+
 static void reset_festival_globals() {
     time_limit = 600;
     verbose = 1;
@@ -89,7 +134,9 @@ Java_my_boxman_solver_FestivalSolver_solveNative(
         jstring filesDir,
         jint timeLimitSec,
         jint requestedCores,
-        jint algorithm) {
+        jint algorithm,
+        jint extraMem,
+        jboolean saveBest) {
     std::lock_guard<std::mutex> lock(solver_mutex);
 
     std::string dir = from_jstring(env, filesDir);
@@ -98,12 +145,14 @@ Java_my_boxman_solver_FestivalSolver_solveNative(
     if (level.empty()) return env->NewStringUTF("Missing level text");
 
     int safeTime = std::max(1, std::min(300, static_cast<int>(timeLimitSec)));
-    (void)requestedCores;
-    int safeCores = 1;
+    int safeCores = std::max(1, std::min(2, static_cast<int>(requestedCores)));
+    int safeExtraMem = std::max(0, std::min(2, static_cast<int>(extraMem)));
 
     std::string inputPath = dir + "/festival-input.sok";
     std::string outputPath = dir + "/festival-output.sok";
+    std::string consolePath = dir + "/festival-console.log";
     std::remove(outputPath.c_str());
+    std::remove(consolePath.c_str());
 
     if (!write_text_file(inputPath, level)) {
         return env->NewStringUTF("Could not write input level");
@@ -125,6 +174,13 @@ Java_my_boxman_solver_FestivalSolver_solveNative(
         args.push_back("-alg");
         args.push_back(std::to_string(static_cast<int>(algorithm)));
     }
+    if (safeExtraMem > 0) {
+        args.push_back("-extra_mem");
+        args.push_back(std::to_string(safeExtraMem));
+    }
+    if (saveBest == JNI_TRUE) {
+        args.push_back("-save_best");
+    }
 
     std::vector<char *> argv;
     argv.reserve(args.size());
@@ -135,14 +191,36 @@ Java_my_boxman_solver_FestivalSolver_solveNative(
     int rc = -1;
     std::string output;
     try {
+        StdioRedirect redirect(consolePath);
         rc = festival_cli_main(static_cast<int>(argv.size()), argv.data());
-        output = read_text_file(outputPath);
+        redirect.restore();
+        std::string consoleOutput = read_text_file(consolePath);
+        std::string solutionOutput = read_text_file(outputPath);
+        if (!consoleOutput.empty()) {
+            output += "[festival console]\n";
+            output += consoleOutput;
+        }
+        if (!solutionOutput.empty()) {
+            if (!output.empty()) output += "\n";
+            output += "[festival solution]\n";
+            output += solutionOutput;
+        }
     } catch (const std::exception &e) {
+        std::string consoleOutput = read_text_file(consolePath);
         output = "Solver error: ";
         output += e.what();
         output += "\n";
+        if (!consoleOutput.empty()) {
+            output += "[festival console]\n";
+            output += consoleOutput;
+        }
     } catch (...) {
+        std::string consoleOutput = read_text_file(consolePath);
         output = "Solver error: unknown native failure\n";
+        if (!consoleOutput.empty()) {
+            output += "[festival console]\n";
+            output += consoleOutput;
+        }
     }
     if (output.empty()) {
         output = "No solution file was produced.\n";

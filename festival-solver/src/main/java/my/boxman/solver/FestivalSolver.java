@@ -36,13 +36,17 @@ public final class FestivalSolver {
     }
 
     public static synchronized String solveText(String levelText, File workDir, int timeLimitSec, int algorithm) {
+        return solveText(levelText, workDir, timeLimitSec, 1, algorithm, 0, false);
+    }
+
+    public static synchronized String solveText(String levelText, File workDir, int timeLimitSec, int cores, int algorithm, int extraMem, boolean saveBest) {
         if (workDir == null) {
             throw new IllegalArgumentException("Missing solver work directory");
         }
         if (!workDir.exists() && !workDir.mkdirs()) {
             throw new IllegalStateException("Could not create solver work directory");
         }
-        return solveNative(levelText, workDir.getAbsolutePath(), timeLimitSec, 1, algorithm);
+        return solveNative(levelText, workDir.getAbsolutePath(), timeLimitSec, cores, algorithm, extraMem, saveBest);
     }
 
     public static String extractPath(String solverOutput) {
@@ -88,5 +92,5 @@ public final class FestivalSolver {
         return trimMessage(output);
     }
 
-    private static native String solveNative(String levelText, String filesDir, int timeLimitSec, int cores, int algorithm);
+    private static native String solveNative(String levelText, String filesDir, int timeLimitSec, int cores, int algorithm, int extraMem, boolean saveBest);
 }

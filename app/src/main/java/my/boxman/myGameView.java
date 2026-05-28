@@ -22,17 +22,24 @@ import android.os.Handler;
 import android.os.Message;
 import android.text.InputType;
 import android.text.method.NumberKeyListener;
+import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import android.widget.ArrayAdapter;
+import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
 import android.widget.CompoundButton.OnCheckedChangeListener;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.Spinner;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import my.boxman.solver.FestivalSolver;
@@ -57,6 +64,38 @@ public class myGameView extends Activity {
     AsyncCountBoxsTask mTask;
     public RunMicroTask mMicroTask;
     private FestivalHintTask mFestivalHintTask;
+    private FestivalHintCache mFestivalHintCache;
+    private AlertDialog mFestivalHintDialog;
+    private TextView mFestivalHintStatusView;
+    private TextView mFestivalHintOutputView;
+    private TextView mFestivalHintCacheView;
+    private Spinner mFestivalHintTimeView;
+    private Spinner mFestivalHintAlgorithmView;
+    private Spinner mFestivalHintCoresView;
+    private Spinner mFestivalHintExtraMemView;
+    private CheckBox mFestivalHintSaveBestView;
+    private final Handler mFestivalHintHandler = new Handler();
+    private final StringBuilder mFestivalHintLog = new StringBuilder();
+    private Runnable mFestivalHintTicker;
+    private boolean mFestivalHintRunning;
+    private long mFestivalHintStartedAt;
+    private String mFestivalHintStatusText = "未求解";
+
+    private static final int FESTIVAL_ALGORITHM_MULTI = -100;
+    private static final String PREF_FESTIVAL_HINT = "FestivalHint";
+    private static final String PREF_FESTIVAL_TIME = "timeLimit";
+    private static final String PREF_FESTIVAL_ALGORITHM = "algorithm";
+    private static final String PREF_FESTIVAL_CORES = "cores";
+    private static final String PREF_FESTIVAL_EXTRA_MEM = "extraMem";
+    private static final String PREF_FESTIVAL_SAVE_BEST = "saveBest";
+    private static final String[] FESTIVAL_TIME_LABELS = {"8 秒", "15 秒", "30 秒", "60 秒", "120 秒", "300 秒"};
+    private static final int[] FESTIVAL_TIME_VALUES = {8, 15, 30, 60, 120, 300};
+    private static final String[] FESTIVAL_ALGORITHM_LABELS = {"工业自动（逐个校验）", "Festival 自动", "算法 7", "算法 0", "算法 1", "算法 2", "算法 3", "算法 4", "算法 5", "算法 6"};
+    private static final int[] FESTIVAL_ALGORITHM_VALUES = {FESTIVAL_ALGORITHM_MULTI, FestivalSolver.AUTO_ALGORITHM, 7, 0, 1, 2, 3, 4, 5, 6};
+    private static final String[] FESTIVAL_CORES_LABELS = {"1 线程（低内存）", "2 线程"};
+    private static final int[] FESTIVAL_CORES_VALUES = {1, 2};
+    private static final String[] FESTIVAL_EXTRA_MEM_LABELS = {"0（低内存）", "1（中等）", "2（高内存）"};
+    private static final int[] FESTIVAL_EXTRA_MEM_VALUES = {0, 1, 2};
 
     AlertDialog AotoNextDlg;
     AlertDialog exitDlg;
@@ -1995,6 +2034,8 @@ public class myGameView extends Activity {
     }
 
     private void newGame() {
+        mFestivalHintCache = null;
+        updateFestivalHintCacheView();
         //本次游戏初始化（正逆推）
         m_nRow = -1;
         m_nCol = -1;
@@ -4726,7 +4767,7 @@ public class myGameView extends Activity {
     private void requestFestivalHint() {
         if (bt_Hint != null) bt_Hint.setChecked(false);
         if (mFestivalHintTask != null && mFestivalHintTask.getStatus() == AsyncTask.Status.RUNNING) {
-            MyToast.showToast(this, "正在求解！", Toast.LENGTH_SHORT);
+            showFestivalHintDialog(false);
             return;
         }
         if (bt_BK.isChecked()) {
@@ -4755,8 +4796,11 @@ public class myGameView extends Activity {
         mMap.invalidate();
 
         String levelText = exportFestivalLevel(m_cArray);
-        mFestivalHintTask = new FestivalHintTask(this, levelText, m_cArray);
-        mFestivalHintTask.execute();
+        if (applyCachedFestivalHint(levelText)) {
+            return;
+        }
+
+        showFestivalHintDialog(true);
     }
 
     private String exportFestivalLevel(char[][] source) {
@@ -4789,16 +4833,32 @@ public class myGameView extends Activity {
         return s.toString();
     }
 
-    private void applyFestivalHintMove(String path) {
+    private boolean applyCachedFestivalHint(String levelText) {
+        if (mFestivalHintCache == null) {
+            return false;
+        }
+        if (!mFestivalHintCache.matches(levelText)) {
+            clearFestivalHintCache("局面变化，缓存失效");
+            return false;
+        }
+        if (mFestivalHintCache.isFinished()) {
+            clearFestivalHintCache("缓存解法已走完");
+            return false;
+        }
+        return applyFestivalHintMove(mFestivalHintCache.remainingPath());
+    }
+
+    private boolean applyFestivalHintMove(String path) {
         if (path == null || path.length() == 0) {
             MyToast.showToast(this, "未找到提示动作！", Toast.LENGTH_SHORT);
-            return;
+            return false;
         }
 
         char move = path.charAt(0);
         if ("lurdLURD".indexOf(move) < 0) {
             MyToast.showToast(this, "求解器返回动作无效！", Toast.LENGTH_SHORT);
-            return;
+            clearFestivalHintCache("缓存动作非法");
+            return false;
         }
 
         StopMicro();
@@ -4806,6 +4866,7 @@ public class myGameView extends Activity {
         if (mMap.m_lShowAnsInf) mMap.m_lShowAnsInf = false;
         m_bNetLock = false;
         m_bACT_ERROR = false;
+        m_bACT_IgnoreCase = false;
         m_bYanshi = false;
         m_bYanshi2 = false;
         m_nStep = 0;
@@ -4814,7 +4875,8 @@ public class myGameView extends Activity {
         formatPath(String.valueOf(move), false);
         if (m_lstMovReDo.isEmpty()) {
             MyToast.showToast(this, "提示动作无法解析！", Toast.LENGTH_SHORT);
-            return;
+            clearFestivalHintCache("动作无法解析");
+            return false;
         }
 
         m_nStep = 1;
@@ -4823,21 +4885,413 @@ public class myGameView extends Activity {
         UpData1(1);
         if (m_bACT_ERROR) {
             MyToast.showToast(this, "提示动作无法执行！", Toast.LENGTH_SHORT);
+            clearFestivalHintCache("动作无法执行");
+            return false;
+        }
+        if (mFestivalHintCache != null) {
+            mFestivalHintCache.advance(1, exportFestivalLevel(m_cArray));
+            updateFestivalHintCacheView();
+        }
+        return true;
+    }
+
+    private void showFestivalHintDialog(boolean missingCache) {
+        if (mFestivalHintDialog == null) {
+            mFestivalHintDialog = buildFestivalHintDialog();
+        }
+        if (missingCache && !mFestivalHintRunning && mFestivalHintCache == null) {
+            setFestivalHintStatus("没有可用缓存，请设置参数后开始求解。");
+        }
+        updateFestivalHintCacheView();
+        if (!mFestivalHintDialog.isShowing()) {
+            mFestivalHintDialog.show();
+        }
+        configureFestivalHintDialogButtons();
+    }
+
+    private AlertDialog buildFestivalHintDialog() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(14), dp(10), dp(14), dp(4));
+
+        mFestivalHintCacheView = new TextView(this);
+        mFestivalHintCacheView.setTextColor(0xffeeeeee);
+        mFestivalHintCacheView.setTextSize(14);
+        root.addView(mFestivalHintCacheView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        mFestivalHintStatusView = new TextView(this);
+        mFestivalHintStatusView.setTextColor(0xffffdd88);
+        mFestivalHintStatusView.setTextSize(14);
+        mFestivalHintStatusView.setPadding(0, dp(6), 0, dp(6));
+        root.addView(mFestivalHintStatusView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        mFestivalHintTimeView = addFestivalSpinner(root, "时间限制", FESTIVAL_TIME_LABELS);
+        mFestivalHintAlgorithmView = addFestivalSpinner(root, "求解算法", FESTIVAL_ALGORITHM_LABELS);
+        mFestivalHintCoresView = addFestivalSpinner(root, "线程数量", FESTIVAL_CORES_LABELS);
+        mFestivalHintExtraMemView = addFestivalSpinner(root, "额外内存", FESTIVAL_EXTRA_MEM_LABELS);
+
+        mFestivalHintSaveBestView = new CheckBox(this);
+        mFestivalHintSaveBestView.setText("保存原生 best 解");
+        mFestivalHintSaveBestView.setTextColor(0xffeeeeee);
+        root.addView(mFestivalHintSaveBestView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView outputTitle = new TextView(this);
+        outputTitle.setText("原生输出");
+        outputTitle.setTextColor(0xffeeeeee);
+        outputTitle.setTextSize(14);
+        outputTitle.setPadding(0, dp(8), 0, dp(4));
+        root.addView(outputTitle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        mFestivalHintOutputView = new TextView(this);
+        mFestivalHintOutputView.setTextColor(0xffe6e6e6);
+        mFestivalHintOutputView.setTextSize(12);
+        mFestivalHintOutputView.setTypeface(android.graphics.Typeface.MONOSPACE);
+        mFestivalHintOutputView.setTextIsSelectable(true);
+        mFestivalHintOutputView.setPadding(dp(6), dp(6), dp(6), dp(6));
+        scroll.addView(mFestivalHintOutputView, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(210)));
+
+        loadFestivalHintOptions();
+        setFestivalHintStatus(mFestivalHintStatusText);
+        updateFestivalHintOutputView();
+
+        AlertDialog dialog = new AlertDialog.Builder(this, AlertDialog.THEME_HOLO_DARK)
+                .setTitle("Festival 求解提示")
+                .setView(root)
+                .setPositiveButton("开始求解", null)
+                .setNeutralButton("清缓存", null)
+                .setNegativeButton("关闭", null)
+                .create();
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(DialogInterface dialogInterface) {
+                configureFestivalHintDialogButtons();
+            }
+        });
+        return dialog;
+    }
+
+    private Spinner addFestivalSpinner(LinearLayout root, String label, String[] values) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(3), 0, dp(3));
+
+        TextView text = new TextView(this);
+        text.setText(label);
+        text.setTextColor(0xffeeeeee);
+        text.setTextSize(14);
+        row.addView(text, new LinearLayout.LayoutParams(dp(76), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        Spinner spinner = new Spinner(this);
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, values);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+        row.addView(spinner, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
+        root.addView(row, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return spinner;
+    }
+
+    private void configureFestivalHintDialogButtons() {
+        if (mFestivalHintDialog == null || !mFestivalHintDialog.isShowing()) return;
+        Button positive = mFestivalHintDialog.getButton(DialogInterface.BUTTON_POSITIVE);
+        if (positive != null) {
+            positive.setText(mFestivalHintRunning ? "求解中" : "开始求解");
+            positive.setEnabled(!mFestivalHintRunning);
+            positive.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    startFestivalSolveFromDialog();
+                }
+            });
+        }
+        Button neutral = mFestivalHintDialog.getButton(DialogInterface.BUTTON_NEUTRAL);
+        if (neutral != null) {
+            neutral.setText(mFestivalHintRunning ? "取消求解" : "清缓存");
+            neutral.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    if (mFestivalHintRunning) {
+                        cancelFestivalHintTask();
+                    } else {
+                        clearFestivalHintCache("手动清除缓存");
+                    }
+                }
+            });
+        }
+        setFestivalHintControlsEnabled(!mFestivalHintRunning);
+    }
+
+    private void setFestivalHintControlsEnabled(boolean enabled) {
+        if (mFestivalHintTimeView != null) mFestivalHintTimeView.setEnabled(enabled);
+        if (mFestivalHintAlgorithmView != null) mFestivalHintAlgorithmView.setEnabled(enabled);
+        if (mFestivalHintCoresView != null) mFestivalHintCoresView.setEnabled(enabled);
+        if (mFestivalHintExtraMemView != null) mFestivalHintExtraMemView.setEnabled(enabled);
+        if (mFestivalHintSaveBestView != null) mFestivalHintSaveBestView.setEnabled(enabled);
+    }
+
+    private void startFestivalSolveFromDialog() {
+        if (mFestivalHintTask != null && mFestivalHintTask.getStatus() == AsyncTask.Status.RUNNING) {
+            setFestivalHintStatus("已经在求解中。");
+            return;
+        }
+        if (m_cArray == null || m_cArray.length == 0 || m_cArray[0].length == 0) {
+            setFestivalHintStatus("关卡未就绪。");
+            return;
+        }
+        if (bt_BK.isChecked()) {
+            setFestivalHintStatus("提示只支持正推局面。");
+            return;
+        }
+        if (myClearance()) {
+            setFestivalHintStatus("已经通关。");
+            return;
+        }
+        if (m_bBusing || m_bYanshi || m_bYanshi2 || mMap.d_Moves < mMap.m_PicWidth) {
+            setFestivalHintStatus("请等当前动作完成。");
+            return;
+        }
+
+        StopMicro();
+        bt_Sel.setChecked(false);
+        if (mMap.m_lShowAnsInf) mMap.m_lShowAnsInf = false;
+        m_bNetLock = false;
+        m_bACT_ERROR = false;
+        mMap.m_lChangeBK = false;
+        mMap.invalidate();
+
+        FestivalHintOptions options = readFestivalHintOptions();
+        saveFestivalHintOptions(options);
+        clearFestivalHintCache("重新求解");
+        resetFestivalHintLog();
+
+        String levelText = exportFestivalLevel(m_cArray);
+        appendFestivalHintLog("参数\n" + options.describe() + "\n\n输入关卡\n" + levelText + "\n");
+        mFestivalHintTask = new FestivalHintTask(this, levelText, m_cArray, options);
+        mFestivalHintTask.execute();
+    }
+
+    private FestivalHintOptions readFestivalHintOptions() {
+        FestivalHintOptions options = new FestivalHintOptions();
+        options.timeLimitSec = selectedSpinnerValue(mFestivalHintTimeView, FESTIVAL_TIME_VALUES, FestivalSolver.DEFAULT_TIME_LIMIT_SEC);
+        options.algorithm = selectedSpinnerValue(mFestivalHintAlgorithmView, FESTIVAL_ALGORITHM_VALUES, FESTIVAL_ALGORITHM_MULTI);
+        options.cores = selectedSpinnerValue(mFestivalHintCoresView, FESTIVAL_CORES_VALUES, 1);
+        options.extraMem = selectedSpinnerValue(mFestivalHintExtraMemView, FESTIVAL_EXTRA_MEM_VALUES, 0);
+        options.saveBest = mFestivalHintSaveBestView != null && mFestivalHintSaveBestView.isChecked();
+        return options;
+    }
+
+    private void saveFestivalHintOptions(FestivalHintOptions options) {
+        SharedPreferences.Editor editor = getSharedPreferences(PREF_FESTIVAL_HINT, Context.MODE_PRIVATE).edit();
+        editor.putInt(PREF_FESTIVAL_TIME, options.timeLimitSec);
+        editor.putInt(PREF_FESTIVAL_ALGORITHM, options.algorithm);
+        editor.putInt(PREF_FESTIVAL_CORES, options.cores);
+        editor.putInt(PREF_FESTIVAL_EXTRA_MEM, options.extraMem);
+        editor.putBoolean(PREF_FESTIVAL_SAVE_BEST, options.saveBest);
+        editor.apply();
+    }
+
+    private void loadFestivalHintOptions() {
+        SharedPreferences sp = getSharedPreferences(PREF_FESTIVAL_HINT, Context.MODE_PRIVATE);
+        setSpinnerSelectionByValue(mFestivalHintTimeView, FESTIVAL_TIME_VALUES, sp.getInt(PREF_FESTIVAL_TIME, FestivalSolver.DEFAULT_TIME_LIMIT_SEC));
+        setSpinnerSelectionByValue(mFestivalHintAlgorithmView, FESTIVAL_ALGORITHM_VALUES, sp.getInt(PREF_FESTIVAL_ALGORITHM, FESTIVAL_ALGORITHM_MULTI));
+        setSpinnerSelectionByValue(mFestivalHintCoresView, FESTIVAL_CORES_VALUES, sp.getInt(PREF_FESTIVAL_CORES, 1));
+        setSpinnerSelectionByValue(mFestivalHintExtraMemView, FESTIVAL_EXTRA_MEM_VALUES, sp.getInt(PREF_FESTIVAL_EXTRA_MEM, 0));
+        if (mFestivalHintSaveBestView != null) {
+            mFestivalHintSaveBestView.setChecked(sp.getBoolean(PREF_FESTIVAL_SAVE_BEST, false));
         }
     }
 
-    private static class FestivalHintTask extends AsyncTask<Void, Void, String> {
+    private int selectedSpinnerValue(Spinner spinner, int[] values, int defaultValue) {
+        if (spinner == null) return defaultValue;
+        int position = spinner.getSelectedItemPosition();
+        if (position < 0 || position >= values.length) return defaultValue;
+        return values[position];
+    }
+
+    private void setSpinnerSelectionByValue(Spinner spinner, int[] values, int value) {
+        if (spinner == null) return;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i] == value) {
+                spinner.setSelection(i, true);
+                return;
+            }
+        }
+        spinner.setSelection(0, true);
+    }
+
+    private void onFestivalProgress(FestivalProgress progress) {
+        if (progress == null) return;
+        if (progress.status != null && progress.status.length() > 0) {
+            setFestivalHintStatus(progress.status);
+        }
+        if (progress.output != null && progress.output.length() > 0) {
+            appendFestivalHintLog(progress.output);
+        }
+    }
+
+    private void onFestivalSolveStarted() {
+        mFestivalHintRunning = true;
+        mFestivalHintStartedAt = System.currentTimeMillis();
+        if (bt_Hint != null) bt_Hint.setEnabled(false);
+        setFestivalHintStatus("求解中，已运行 0 秒。");
+        configureFestivalHintDialogButtons();
+        startFestivalHintTicker();
+    }
+
+    private void onFestivalSolveFinished(FestivalSolveResult result) {
+        mFestivalHintTask = null;
+        mFestivalHintRunning = false;
+        m_bBusing = false;
+        stopFestivalHintTicker();
+        if (bt_Hint != null) {
+            bt_Hint.setEnabled(true);
+            bt_Hint.setChecked(false);
+        }
+        configureFestivalHintDialogButtons();
+        if (isFinishing() || m_cArray == null) {
+            return;
+        }
+        if (result != null && result.cancelled) {
+            setFestivalHintStatus("求解已取消。");
+            return;
+        }
+        if (result == null || result.path == null || result.path.length() == 0) {
+            setFestivalHintStatus(result == null || result.error == null ? "未能完成求解。" : result.error);
+            return;
+        }
+        if (!result.levelText.equals(exportFestivalLevel(m_cArray))) {
+            setFestivalHintStatus("局面已变化，已缓存但不会自动执行。");
+            mFestivalHintCache = new FestivalHintCache(result.levelText, result.path);
+            updateFestivalHintCacheView();
+            return;
+        }
+        mFestivalHintCache = new FestivalHintCache(result.levelText, result.path);
+        setFestivalHintStatus("求解成功，已缓存完整路径，正在执行第一步。");
+        updateFestivalHintCacheView();
+        applyFestivalHintMove(mFestivalHintCache.remainingPath());
+    }
+
+    private void onFestivalSolveCancelled() {
+        mFestivalHintTask = null;
+        mFestivalHintRunning = false;
+        m_bBusing = false;
+        stopFestivalHintTicker();
+        if (bt_Hint != null) {
+            bt_Hint.setEnabled(true);
+            bt_Hint.setChecked(false);
+        }
+        setFestivalHintStatus("求解已取消。");
+        configureFestivalHintDialogButtons();
+    }
+
+    private void cancelFestivalHintTask() {
+        if (mFestivalHintTask != null && mFestivalHintTask.getStatus() == AsyncTask.Status.RUNNING) {
+            mFestivalHintTask.cancel(true);
+            setFestivalHintStatus("已请求取消，等待原生求解返回。");
+            configureFestivalHintDialogButtons();
+        }
+    }
+
+    private void startFestivalHintTicker() {
+        stopFestivalHintTicker();
+        mFestivalHintTicker = new Runnable() {
+            @Override
+            public void run() {
+                if (!mFestivalHintRunning) return;
+                long seconds = Math.max(0, (System.currentTimeMillis() - mFestivalHintStartedAt) / 1000);
+                if (mFestivalHintStatusView != null) {
+                    mFestivalHintStatusView.setText(mFestivalHintStatusText + "\n已运行 " + seconds + " 秒。");
+                }
+                mFestivalHintHandler.postDelayed(this, 1000);
+            }
+        };
+        mFestivalHintHandler.postDelayed(mFestivalHintTicker, 1000);
+    }
+
+    private void stopFestivalHintTicker() {
+        if (mFestivalHintTicker != null) {
+            mFestivalHintHandler.removeCallbacks(mFestivalHintTicker);
+            mFestivalHintTicker = null;
+        }
+    }
+
+    private void setFestivalHintStatus(String status) {
+        if (status == null || status.length() == 0) status = "未求解";
+        mFestivalHintStatusText = status;
+        if (mFestivalHintStatusView != null) {
+            mFestivalHintStatusView.setText(status);
+        }
+    }
+
+    private void resetFestivalHintLog() {
+        mFestivalHintLog.setLength(0);
+        updateFestivalHintOutputView();
+    }
+
+    private void appendFestivalHintLog(String text) {
+        if (text == null || text.length() == 0) return;
+        if (mFestivalHintLog.length() > 0 && mFestivalHintLog.charAt(mFestivalHintLog.length() - 1) != '\n') {
+            mFestivalHintLog.append('\n');
+        }
+        mFestivalHintLog.append(text);
+        if (mFestivalHintLog.length() > 60000) {
+            mFestivalHintLog.delete(0, mFestivalHintLog.length() - 60000);
+            mFestivalHintLog.insert(0, "[前段输出已截断]\n");
+        }
+        updateFestivalHintOutputView();
+    }
+
+    private void updateFestivalHintOutputView() {
+        if (mFestivalHintOutputView != null) {
+            mFestivalHintOutputView.setText(mFestivalHintLog.length() == 0 ? "暂无原生输出。" : mFestivalHintLog.toString());
+        }
+    }
+
+    private void updateFestivalHintCacheView() {
+        if (mFestivalHintCacheView == null) return;
+        if (mFestivalHintCache == null) {
+            mFestivalHintCacheView.setText("缓存：无");
+        } else {
+            mFestivalHintCacheView.setText("缓存：可用，剩余 " + mFestivalHintCache.remainingCount()
+                    + " / " + mFestivalHintCache.totalCount() + " 步");
+        }
+    }
+
+    private void clearFestivalHintCache(String reason) {
+        mFestivalHintCache = null;
+        updateFestivalHintCacheView();
+        if (reason != null && reason.length() > 0) {
+            appendFestivalHintLog("\n[缓存] " + reason + "\n");
+        }
+    }
+
+    private int dp(int value) {
+        return (int)(value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private static class FestivalHintTask extends AsyncTask<Void, FestivalProgress, FestivalSolveResult> {
         private final WeakReference<myGameView> mViewReference;
         private final String mLevelText;
         private final char[][] mStartBoard;
         private final File mWorkDir;
-        private String mError;
+        private final FestivalHintOptions mOptions;
 
-        FestivalHintTask(myGameView view, String levelText, char[][] startBoard) {
+        FestivalHintTask(myGameView view, String levelText, char[][] startBoard, FestivalHintOptions options) {
             mViewReference = new WeakReference<myGameView>(view);
             mLevelText = levelText;
             mStartBoard = copyBoard(startBoard);
             mWorkDir = new File(view.getFilesDir(), "festival-solver");
+            mOptions = options;
         }
 
         @Override
@@ -4845,222 +5299,352 @@ public class myGameView extends Activity {
             myGameView view = mViewReference.get();
             if (view != null) {
                 view.m_bBusing = true;
-                if (view.bt_Hint != null) view.bt_Hint.setEnabled(false);
-                MyToast.showToast(view, "求解中...", Toast.LENGTH_SHORT);
+                view.onFestivalSolveStarted();
             }
             super.onPreExecute();
         }
 
         @Override
-        protected String doInBackground(Void... params) {
+        protected FestivalSolveResult doInBackground(Void... params) {
             String lastError = null;
-            for (int algorithm : FestivalSolver.DEFAULT_ALGORITHMS) {
-                if (isCancelled()) return null;
+            int[] algorithms = mOptions.algorithms();
+            for (int i = 0; i < algorithms.length; i++) {
+                int algorithm = algorithms[i];
+                if (isCancelled()) {
+                    return FestivalSolveResult.cancelled(mLevelText);
+                }
+                String algorithmName = algorithmName(algorithm);
+                publishProgress(FestivalProgress.status("开始 " + algorithmName + "（" + (i + 1) + "/" + algorithms.length + "）"));
                 try {
-                    String output = FestivalSolver.solveText(mLevelText, mWorkDir, FestivalSolver.DEFAULT_TIME_LIMIT_SEC, algorithm);
+                    long startedAt = System.currentTimeMillis();
+                    String output = FestivalSolver.solveText(mLevelText, mWorkDir, mOptions.timeLimitSec, mOptions.cores,
+                            algorithm, mOptions.extraMem, mOptions.saveBest);
+                    long elapsedMs = System.currentTimeMillis() - startedAt;
+                    publishProgress(FestivalProgress.output(
+                            "\n========== " + algorithmName + " / 用时 " + (elapsedMs / 1000.0d) + " 秒 ==========\n"
+                                    + safeOutput(output) + "\n"));
+                    if (isCancelled()) {
+                        return FestivalSolveResult.cancelled(mLevelText);
+                    }
                     String path = FestivalSolver.extractPath(output);
                     if (path.length() == 0) {
-                        lastError = FestivalSolver.trimSolverMessage(output);
+                        lastError = "未输出 LURD 路径：" + FestivalSolver.trimSolverMessage(output);
+                        publishProgress(FestivalProgress.status(algorithmName + " 未返回路径，继续尝试。"));
                         continue;
                     }
                     ValidationResult validation = validateSolutionPath(mStartBoard, path);
                     if (validation.valid) {
-                        return validation.path;
+                        publishProgress(FestivalProgress.status(algorithmName + " 通过完整路径校验，移动 " + validation.path.length() + " 步。"));
+                        return FestivalSolveResult.solved(mLevelText, validation.path);
                     }
-                    lastError = validation.error;
+                    lastError = algorithmName + " 校验失败：" + validation.error;
+                    publishProgress(FestivalProgress.output("[校验失败] " + validation.error + "\n"));
+                    publishProgress(FestivalProgress.status(algorithmName + " 校验失败，继续尝试。"));
                 } catch (Throwable ex) {
                     lastError = ex.getMessage();
                     if (lastError == null || lastError.length() == 0) {
                         lastError = ex.getClass().getSimpleName();
                     }
+                    publishProgress(FestivalProgress.output("[异常] " + algorithmName + ": " + lastError + "\n"));
+                    publishProgress(FestivalProgress.status(algorithmName + " 异常，继续尝试。"));
                 }
             }
-            mError = lastError == null ? "求解结果未通过校验！" : lastError;
-            return null;
+            if (lastError == null || lastError.length() == 0) {
+                lastError = "求解结果未通过校验。";
+            }
+            return FestivalSolveResult.failed(mLevelText, lastError);
         }
 
         @Override
-        protected void onPostExecute(String path) {
+        protected void onProgressUpdate(FestivalProgress... values) {
             myGameView view = mViewReference.get();
-            if (view != null) {
-                view.mFestivalHintTask = null;
-                view.m_bBusing = false;
-                if (view.bt_Hint != null) {
-                    view.bt_Hint.setEnabled(true);
-                    view.bt_Hint.setChecked(false);
-                }
-                if (view.isFinishing() || view.m_cArray == null) {
-                    return;
-                } else if (path == null || path.length() == 0) {
-                    MyToast.showToast(view, mError == null ? "未能完成求解！" : mError, Toast.LENGTH_SHORT);
-                } else if (!mLevelText.equals(view.exportFestivalLevel(view.m_cArray))) {
-                    MyToast.showToast(view, "局面已变化，请重新提示！", Toast.LENGTH_SHORT);
-                } else {
-                    view.applyFestivalHintMove(path);
+            if (view != null && values != null) {
+                for (FestivalProgress value : values) {
+                    view.onFestivalProgress(value);
                 }
             }
-            super.onPostExecute(path);
+            super.onProgressUpdate(values);
         }
 
         @Override
-        protected void onCancelled(String path) {
+        protected void onPostExecute(FestivalSolveResult result) {
             myGameView view = mViewReference.get();
             if (view != null) {
-                view.mFestivalHintTask = null;
-                view.m_bBusing = false;
-                if (view.bt_Hint != null) {
-                    view.bt_Hint.setEnabled(true);
-                    view.bt_Hint.setChecked(false);
-                }
+                view.onFestivalSolveFinished(result);
             }
-            super.onCancelled(path);
+            super.onPostExecute(result);
         }
 
-        private static char[][] copyBoard(char[][] board) {
-            char[][] copy = new char[board.length][];
-            for (int i = 0; i < board.length; i++) {
-                copy[i] = Arrays.copyOf(board[i], board[i].length);
+        @Override
+        protected void onCancelled(FestivalSolveResult result) {
+            myGameView view = mViewReference.get();
+            if (view != null) {
+                view.onFestivalSolveCancelled();
             }
-            return copy;
+            super.onCancelled(result);
         }
 
-        private static ValidationResult validateSolutionPath(char[][] board, String path) {
-            char[][] state = copyBoard(board);
-            StringBuilder canonicalPath = new StringBuilder(path.length());
-            int rows = state.length;
-            int cols = state[0].length;
-            int manRow = -1;
-            int manCol = -1;
-            int targets = 0;
-            int boxesOnTargets = 0;
-            boolean pushed = false;
+        private static String safeOutput(String output) {
+            if (output == null || output.length() == 0) return "无原生输出\n";
+            return output;
+        }
+    }
 
-            for (int i = 0; i < rows; i++) {
-                for (int j = 0; j < cols; j++) {
-                    char ch = state[i][j];
-                    if (ch == '@' || ch == '+') {
-                        manRow = i;
-                        manCol = j;
-                    }
-                    if (ch == '.' || ch == '+' || ch == '*') {
-                        targets++;
-                    }
-                    if (ch == '*') {
-                        boxesOnTargets++;
-                    }
+    private static class FestivalHintOptions {
+        int timeLimitSec;
+        int algorithm;
+        int cores;
+        int extraMem;
+        boolean saveBest;
+
+        int[] algorithms() {
+            if (algorithm == FESTIVAL_ALGORITHM_MULTI) {
+                return FestivalSolver.DEFAULT_ALGORITHMS;
+            }
+            return new int[]{algorithm};
+        }
+
+        String describe() {
+            return "时间限制: " + timeLimitSec + " 秒\n"
+                    + "算法: " + algorithmName(algorithm) + "\n"
+                    + "线程: " + cores + "\n"
+                    + "额外内存: " + extraMem + "\n"
+                    + "保存 best: " + (saveBest ? "是" : "否");
+        }
+    }
+
+    private static class FestivalHintCache {
+        private String levelText;
+        private final String path;
+        private int index;
+
+        FestivalHintCache(String levelText, String path) {
+            this.levelText = levelText;
+            this.path = path == null ? "" : path;
+            this.index = 0;
+        }
+
+        boolean matches(String currentLevelText) {
+            return levelText != null && levelText.equals(currentLevelText);
+        }
+
+        boolean isFinished() {
+            return index >= path.length();
+        }
+
+        String remainingPath() {
+            if (isFinished()) return "";
+            return path.substring(index);
+        }
+
+        void advance(int steps, String currentLevelText) {
+            index = Math.min(path.length(), index + steps);
+            levelText = currentLevelText;
+        }
+
+        int remainingCount() {
+            return Math.max(0, path.length() - index);
+        }
+
+        int totalCount() {
+            return path.length();
+        }
+    }
+
+    private static class FestivalProgress {
+        final String status;
+        final String output;
+
+        private FestivalProgress(String status, String output) {
+            this.status = status;
+            this.output = output;
+        }
+
+        static FestivalProgress status(String status) {
+            return new FestivalProgress(status, null);
+        }
+
+        static FestivalProgress output(String output) {
+            return new FestivalProgress(null, output);
+        }
+    }
+
+    private static class FestivalSolveResult {
+        final String levelText;
+        final String path;
+        final String error;
+        final boolean cancelled;
+
+        private FestivalSolveResult(String levelText, String path, String error, boolean cancelled) {
+            this.levelText = levelText;
+            this.path = path;
+            this.error = error;
+            this.cancelled = cancelled;
+        }
+
+        static FestivalSolveResult solved(String levelText, String path) {
+            return new FestivalSolveResult(levelText, path, null, false);
+        }
+
+        static FestivalSolveResult failed(String levelText, String error) {
+            return new FestivalSolveResult(levelText, null, error, false);
+        }
+
+        static FestivalSolveResult cancelled(String levelText) {
+            return new FestivalSolveResult(levelText, null, "求解已取消。", true);
+        }
+    }
+
+    private static char[][] copyBoard(char[][] board) {
+        char[][] copy = new char[board.length][];
+        for (int i = 0; i < board.length; i++) {
+            copy[i] = Arrays.copyOf(board[i], board[i].length);
+        }
+        return copy;
+    }
+
+    private static ValidationResult validateSolutionPath(char[][] board, String path) {
+        char[][] state = copyBoard(board);
+        StringBuilder canonicalPath = new StringBuilder(path.length());
+        int rows = state.length;
+        int cols = state[0].length;
+        int manRow = -1;
+        int manCol = -1;
+        int targets = 0;
+        int boxesOnTargets = 0;
+        boolean pushed = false;
+
+        for (int i = 0; i < rows; i++) {
+            for (int j = 0; j < cols; j++) {
+                char ch = state[i][j];
+                if (ch == '@' || ch == '+') {
+                    manRow = i;
+                    manCol = j;
+                }
+                if (ch == '.' || ch == '+' || ch == '*') {
+                    targets++;
+                }
+                if (ch == '*') {
+                    boxesOnTargets++;
                 }
             }
-            if (manRow < 0 || manCol < 0) return ValidationResult.error("局面缺少仓管员！");
+        }
+        if (manRow < 0 || manCol < 0) return ValidationResult.error("局面缺少仓管员！");
 
-            for (int step = 0; step < path.length(); step++) {
-                char ch = path.charAt(step);
-                int dir = dirIndex(ch);
-                if (dir < 0) return ValidationResult.error("求解器返回非法字符！");
+        for (int step = 0; step < path.length(); step++) {
+            char ch = path.charAt(step);
+            int dir = dirIndex(ch);
+            if (dir < 0) return ValidationResult.error("求解器返回非法字符！");
 
-                int nr = manRow + drForDir(dir);
-                int nc = manCol + dcForDir(dir);
-                if (!inside(nr, nc, rows, cols)) return ValidationResult.error("求解路径越界！");
-                char next = state[nr][nc];
-                boolean wantsPush = Character.isUpperCase(ch);
-                boolean hasBox = next == '$' || next == '*';
+            int nr = manRow + drForDir(dir);
+            int nc = manCol + dcForDir(dir);
+            if (!inside(nr, nc, rows, cols)) return ValidationResult.error("求解路径越界！");
+            char next = state[nr][nc];
+            boolean wantsPush = Character.isUpperCase(ch);
+            boolean hasBox = next == '$' || next == '*';
 
-                if (wantsPush || hasBox) {
-                    if (!hasBox) return ValidationResult.error("求解路径推空！");
-                    int br = nr + drForDir(dir);
-                    int bc = nc + dcForDir(dir);
-                    if (!inside(br, bc, rows, cols)) return ValidationResult.error("求解路径推箱越界！");
-                    char boxDest = state[br][bc];
-                    if (!isFloor(boxDest)) return ValidationResult.error("求解路径推箱受阻！");
+            if (wantsPush || hasBox) {
+                if (!hasBox) return ValidationResult.error("求解路径推空！");
+                int br = nr + drForDir(dir);
+                int bc = nc + dcForDir(dir);
+                if (!inside(br, bc, rows, cols)) return ValidationResult.error("求解路径推箱越界！");
+                char boxDest = state[br][bc];
+                if (!isFloor(boxDest)) return ValidationResult.error("求解路径推箱受阻！");
 
-                    if (boxDest == '.') {
-                        state[br][bc] = '*';
-                        boxesOnTargets++;
-                    } else {
-                        state[br][bc] = '$';
-                    }
-                    if (next == '*') {
-                        state[nr][nc] = '+';
-                        boxesOnTargets--;
-                    } else {
-                        state[nr][nc] = '@';
-                    }
-                    leaveManCell(state, manRow, manCol);
-                    manRow = nr;
-                    manCol = nc;
-                    pushed = true;
-                    canonicalPath.append(Character.toUpperCase(ch));
+                if (boxDest == '.') {
+                    state[br][bc] = '*';
+                    boxesOnTargets++;
                 } else {
-                    if (!isFloor(next)) return ValidationResult.error("求解路径移动受阻！");
-                    state[nr][nc] = next == '.' ? '+' : '@';
-                    leaveManCell(state, manRow, manCol);
-                    manRow = nr;
-                    manCol = nc;
-                    canonicalPath.append(Character.toLowerCase(ch));
+                    state[br][bc] = '$';
                 }
-            }
-
-            if (!pushed) return ValidationResult.error("求解路径没有推动箱子！");
-            if (boxesOnTargets != targets) return ValidationResult.error("求解路径未完成关卡！");
-            return ValidationResult.valid(canonicalPath.toString());
-        }
-
-        private static class ValidationResult {
-            final boolean valid;
-            final String path;
-            final String error;
-
-            private ValidationResult(boolean valid, String path, String error) {
-                this.valid = valid;
-                this.path = path;
-                this.error = error;
-            }
-
-            static ValidationResult valid(String path) {
-                return new ValidationResult(true, path, null);
-            }
-
-            static ValidationResult error(String error) {
-                return new ValidationResult(false, null, error);
+                if (next == '*') {
+                    state[nr][nc] = '+';
+                    boxesOnTargets--;
+                } else {
+                    state[nr][nc] = '@';
+                }
+                leaveManCell(state, manRow, manCol);
+                manRow = nr;
+                manCol = nc;
+                pushed = true;
+                canonicalPath.append(Character.toUpperCase(ch));
+            } else {
+                if (!isFloor(next)) return ValidationResult.error("求解路径移动受阻！");
+                state[nr][nc] = next == '.' ? '+' : '@';
+                leaveManCell(state, manRow, manCol);
+                manRow = nr;
+                manCol = nc;
+                canonicalPath.append(Character.toLowerCase(ch));
             }
         }
 
-        private static void leaveManCell(char[][] state, int row, int col) {
-            state[row][col] = state[row][col] == '+' ? '.' : '-';
+        if (!pushed) return ValidationResult.error("求解路径没有推动箱子！");
+        if (boxesOnTargets != targets) return ValidationResult.error("求解路径未完成关卡！");
+        return ValidationResult.valid(canonicalPath.toString());
+    }
+
+    private static class ValidationResult {
+        final boolean valid;
+        final String path;
+        final String error;
+
+        private ValidationResult(boolean valid, String path, String error) {
+            this.valid = valid;
+            this.path = path;
+            this.error = error;
         }
 
-        private static boolean inside(int row, int col, int rows, int cols) {
-            return row >= 0 && col >= 0 && row < rows && col < cols;
+        static ValidationResult valid(String path) {
+            return new ValidationResult(true, path, null);
         }
 
-        private static boolean isFloor(char ch) {
-            return ch == '-' || ch == '.';
+        static ValidationResult error(String error) {
+            return new ValidationResult(false, null, error);
         }
+    }
 
-        private static int dirIndex(char ch) {
-            switch (Character.toLowerCase(ch)) {
-                case 'l': return 0;
-                case 'u': return 1;
-                case 'r': return 2;
-                case 'd': return 3;
-                default: return -1;
-            }
-        }
+    private static void leaveManCell(char[][] state, int row, int col) {
+        state[row][col] = state[row][col] == '+' ? '.' : '-';
+    }
 
-        private static int drForDir(int dir) {
-            switch (dir) {
-                case 1: return -1;
-                case 3: return 1;
-                default: return 0;
-            }
-        }
+    private static boolean inside(int row, int col, int rows, int cols) {
+        return row >= 0 && col >= 0 && row < rows && col < cols;
+    }
 
-        private static int dcForDir(int dir) {
-            switch (dir) {
-                case 0: return -1;
-                case 2: return 1;
-                default: return 0;
-            }
+    private static boolean isFloor(char ch) {
+        return ch == '-' || ch == '.';
+    }
+
+    private static int dirIndex(char ch) {
+        switch (Character.toLowerCase(ch)) {
+            case 'l': return 0;
+            case 'u': return 1;
+            case 'r': return 2;
+            case 'd': return 3;
+            default: return -1;
         }
+    }
+
+    private static int drForDir(int dir) {
+        switch (dir) {
+            case 1: return -1;
+            case 3: return 1;
+            default: return 0;
+        }
+    }
+
+    private static int dcForDir(int dir) {
+        switch (dir) {
+            case 0: return -1;
+            case 2: return 1;
+            default: return 0;
+        }
+    }
+
+    private static String algorithmName(int algorithm) {
+        if (algorithm == FESTIVAL_ALGORITHM_MULTI) return "工业自动";
+        if (algorithm == FestivalSolver.AUTO_ALGORITHM) return "Festival 自动";
+        return "算法 " + algorithm;
     }
 
     // YASS 求解
@@ -5850,12 +6434,14 @@ public class myGameView extends Activity {
 
     //结束推箱子界面前的处理
     private void myStop() {
-        if (mFestivalHintTask != null) {
-            if (!mFestivalHintTask.isCancelled() && mFestivalHintTask.getStatus() == AsyncTask.Status.RUNNING) {
-                mFestivalHintTask.cancel(true);
-            }
-            mFestivalHintTask = null;
+        cancelFestivalHintTask();
+        stopFestivalHintTicker();
+        mFestivalHintHandler.removeCallbacksAndMessages(null);
+        if (mFestivalHintDialog != null && mFestivalHintDialog.isShowing()) {
+            mFestivalHintDialog.dismiss();
         }
+        mFestivalHintDialog = null;
+        mFestivalHintTask = null;
         if (mTask != null) {
             if (!mTask.isCancelled() && mTask.getStatus() == AsyncTask.Status.RUNNING) {
                 mTask.cancel(true);
