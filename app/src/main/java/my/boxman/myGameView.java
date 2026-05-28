@@ -4754,9 +4754,39 @@ public class myGameView extends Activity {
         mMap.m_lChangeBK = false;
         mMap.invalidate();
 
-        String levelText = myMaps.getLocale(m_cArray);
-        mFestivalHintTask = new FestivalHintTask(this, levelText);
+        String levelText = exportFestivalLevel(m_cArray);
+        mFestivalHintTask = new FestivalHintTask(this, levelText, m_cArray);
         mFestivalHintTask.execute();
+    }
+
+    private String exportFestivalLevel(char[][] source) {
+        StringBuilder s = new StringBuilder();
+        for (int i = 0; i < source.length; i++) {
+            for (int j = 0; j < source[i].length; j++) {
+                char ch = source[i][j];
+                switch (ch) {
+                    case '_':
+                    case '#':
+                        s.append('#');
+                        break;
+                    case '-':
+                        s.append('-');
+                        break;
+                    case '$':
+                    case '*':
+                    case '.':
+                    case '@':
+                    case '+':
+                        s.append(ch);
+                        break;
+                    default:
+                        s.append('#');
+                        break;
+                }
+            }
+            if (i < source.length - 1) s.append('\n');
+        }
+        return s.toString();
     }
 
     private void applyFestivalHintMove(String path) {
@@ -4799,12 +4829,14 @@ public class myGameView extends Activity {
     private static class FestivalHintTask extends AsyncTask<Void, Void, String> {
         private final WeakReference<myGameView> mViewReference;
         private final String mLevelText;
+        private final char[][] mStartBoard;
         private final File mWorkDir;
         private String mError;
 
-        FestivalHintTask(myGameView view, String levelText) {
+        FestivalHintTask(myGameView view, String levelText, char[][] startBoard) {
             mViewReference = new WeakReference<myGameView>(view);
             mLevelText = levelText;
+            mStartBoard = copyBoard(startBoard);
             mWorkDir = new File(view.getFilesDir(), "festival-solver");
         }
 
@@ -4821,14 +4853,29 @@ public class myGameView extends Activity {
 
         @Override
         protected String doInBackground(Void... params) {
-            try {
-                return FestivalSolver.solvePath(mLevelText, mWorkDir, FestivalSolver.DEFAULT_TIME_LIMIT_SEC);
-            } catch (Throwable ex) {
-                mError = ex.getMessage();
-                if (mError == null || mError.length() == 0) {
-                    mError = ex.getClass().getSimpleName();
+            String lastError = null;
+            for (int algorithm : FestivalSolver.DEFAULT_ALGORITHMS) {
+                if (isCancelled()) return null;
+                try {
+                    String output = FestivalSolver.solveText(mLevelText, mWorkDir, FestivalSolver.DEFAULT_TIME_LIMIT_SEC, algorithm);
+                    String path = FestivalSolver.extractPath(output);
+                    if (path.length() == 0) {
+                        lastError = FestivalSolver.trimSolverMessage(output);
+                        continue;
+                    }
+                    ValidationResult validation = validateSolutionPath(mStartBoard, path);
+                    if (validation.valid) {
+                        return validation.path;
+                    }
+                    lastError = validation.error;
+                } catch (Throwable ex) {
+                    lastError = ex.getMessage();
+                    if (lastError == null || lastError.length() == 0) {
+                        lastError = ex.getClass().getSimpleName();
+                    }
                 }
             }
+            mError = lastError == null ? "求解结果未通过校验！" : lastError;
             return null;
         }
 
@@ -4846,7 +4893,7 @@ public class myGameView extends Activity {
                     return;
                 } else if (path == null || path.length() == 0) {
                     MyToast.showToast(view, mError == null ? "未能完成求解！" : mError, Toast.LENGTH_SHORT);
-                } else if (!mLevelText.equals(myMaps.getLocale(view.m_cArray))) {
+                } else if (!mLevelText.equals(view.exportFestivalLevel(view.m_cArray))) {
                     MyToast.showToast(view, "局面已变化，请重新提示！", Toast.LENGTH_SHORT);
                 } else {
                     view.applyFestivalHintMove(path);
@@ -4867,6 +4914,152 @@ public class myGameView extends Activity {
                 }
             }
             super.onCancelled(path);
+        }
+
+        private static char[][] copyBoard(char[][] board) {
+            char[][] copy = new char[board.length][];
+            for (int i = 0; i < board.length; i++) {
+                copy[i] = Arrays.copyOf(board[i], board[i].length);
+            }
+            return copy;
+        }
+
+        private static ValidationResult validateSolutionPath(char[][] board, String path) {
+            char[][] state = copyBoard(board);
+            StringBuilder canonicalPath = new StringBuilder(path.length());
+            int rows = state.length;
+            int cols = state[0].length;
+            int manRow = -1;
+            int manCol = -1;
+            int targets = 0;
+            int boxesOnTargets = 0;
+            boolean pushed = false;
+
+            for (int i = 0; i < rows; i++) {
+                for (int j = 0; j < cols; j++) {
+                    char ch = state[i][j];
+                    if (ch == '@' || ch == '+') {
+                        manRow = i;
+                        manCol = j;
+                    }
+                    if (ch == '.' || ch == '+' || ch == '*') {
+                        targets++;
+                    }
+                    if (ch == '*') {
+                        boxesOnTargets++;
+                    }
+                }
+            }
+            if (manRow < 0 || manCol < 0) return ValidationResult.error("局面缺少仓管员！");
+
+            for (int step = 0; step < path.length(); step++) {
+                char ch = path.charAt(step);
+                int dir = dirIndex(ch);
+                if (dir < 0) return ValidationResult.error("求解器返回非法字符！");
+
+                int nr = manRow + drForDir(dir);
+                int nc = manCol + dcForDir(dir);
+                if (!inside(nr, nc, rows, cols)) return ValidationResult.error("求解路径越界！");
+                char next = state[nr][nc];
+                boolean wantsPush = Character.isUpperCase(ch);
+                boolean hasBox = next == '$' || next == '*';
+
+                if (wantsPush || hasBox) {
+                    if (!hasBox) return ValidationResult.error("求解路径推空！");
+                    int br = nr + drForDir(dir);
+                    int bc = nc + dcForDir(dir);
+                    if (!inside(br, bc, rows, cols)) return ValidationResult.error("求解路径推箱越界！");
+                    char boxDest = state[br][bc];
+                    if (!isFloor(boxDest)) return ValidationResult.error("求解路径推箱受阻！");
+
+                    if (boxDest == '.') {
+                        state[br][bc] = '*';
+                        boxesOnTargets++;
+                    } else {
+                        state[br][bc] = '$';
+                    }
+                    if (next == '*') {
+                        state[nr][nc] = '+';
+                        boxesOnTargets--;
+                    } else {
+                        state[nr][nc] = '@';
+                    }
+                    leaveManCell(state, manRow, manCol);
+                    manRow = nr;
+                    manCol = nc;
+                    pushed = true;
+                    canonicalPath.append(Character.toUpperCase(ch));
+                } else {
+                    if (!isFloor(next)) return ValidationResult.error("求解路径移动受阻！");
+                    state[nr][nc] = next == '.' ? '+' : '@';
+                    leaveManCell(state, manRow, manCol);
+                    manRow = nr;
+                    manCol = nc;
+                    canonicalPath.append(Character.toLowerCase(ch));
+                }
+            }
+
+            if (!pushed) return ValidationResult.error("求解路径没有推动箱子！");
+            if (boxesOnTargets != targets) return ValidationResult.error("求解路径未完成关卡！");
+            return ValidationResult.valid(canonicalPath.toString());
+        }
+
+        private static class ValidationResult {
+            final boolean valid;
+            final String path;
+            final String error;
+
+            private ValidationResult(boolean valid, String path, String error) {
+                this.valid = valid;
+                this.path = path;
+                this.error = error;
+            }
+
+            static ValidationResult valid(String path) {
+                return new ValidationResult(true, path, null);
+            }
+
+            static ValidationResult error(String error) {
+                return new ValidationResult(false, null, error);
+            }
+        }
+
+        private static void leaveManCell(char[][] state, int row, int col) {
+            state[row][col] = state[row][col] == '+' ? '.' : '-';
+        }
+
+        private static boolean inside(int row, int col, int rows, int cols) {
+            return row >= 0 && col >= 0 && row < rows && col < cols;
+        }
+
+        private static boolean isFloor(char ch) {
+            return ch == '-' || ch == '.';
+        }
+
+        private static int dirIndex(char ch) {
+            switch (Character.toLowerCase(ch)) {
+                case 'l': return 0;
+                case 'u': return 1;
+                case 'r': return 2;
+                case 'd': return 3;
+                default: return -1;
+            }
+        }
+
+        private static int drForDir(int dir) {
+            switch (dir) {
+                case 1: return -1;
+                case 3: return 1;
+                default: return 0;
+            }
+        }
+
+        private static int dcForDir(int dir) {
+            switch (dir) {
+                case 0: return -1;
+                case 2: return 1;
+                default: return 0;
+            }
         }
     }
 

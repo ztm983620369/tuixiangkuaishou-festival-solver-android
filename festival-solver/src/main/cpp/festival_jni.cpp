@@ -88,7 +88,8 @@ Java_my_boxman_solver_FestivalSolver_solveNative(
         jstring levelText,
         jstring filesDir,
         jint timeLimitSec,
-        jint requestedCores) {
+        jint requestedCores,
+        jint algorithm) {
     std::lock_guard<std::mutex> lock(solver_mutex);
 
     std::string dir = from_jstring(env, filesDir);
@@ -117,10 +118,13 @@ Java_my_boxman_solver_FestivalSolver_solveNative(
             "-level", "1",
             "-time", std::to_string(safeTime),
             "-cores", std::to_string(safeCores),
-            "-alg", "7",
             "-out_dir", dir,
             "-out_file", outputPath
     };
+    if (algorithm >= 0 && algorithm <= 7) {
+        args.push_back("-alg");
+        args.push_back(std::to_string(static_cast<int>(algorithm)));
+    }
 
     std::vector<char *> argv;
     argv.reserve(args.size());
