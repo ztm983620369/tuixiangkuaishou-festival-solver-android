@@ -140,6 +140,14 @@ public final class FestivalSolver {
         return "";
     }
 
+    public static boolean isMaxNodesReached(String solverOutput) {
+        String reason = extractReason(solverOutput);
+        if ("Max nodes reached".equalsIgnoreCase(reason)) {
+            return true;
+        }
+        return solverOutput != null && solverOutput.contains("Max nodes reached");
+    }
+
     private static int parseInt(String value) {
         try {
             return Integer.parseInt(value);

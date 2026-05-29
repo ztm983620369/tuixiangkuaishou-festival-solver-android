@@ -5244,6 +5244,7 @@ public class myGameView extends Activity {
         options.algorithm = selectedSpinnerValue(mFestivalHintAlgorithmView, FESTIVAL_ALGORITHM_VALUES, FESTIVAL_ALGORITHM_MULTI);
         options.cores = selectedSpinnerValue(mFestivalHintCoresView, mFestivalCoreValues, defaultFestivalCores());
         options.extraMem = selectedSpinnerValue(mFestivalHintExtraMemView, mFestivalExtraMemValues, defaultFestivalExtraMem());
+        options.maxExtraMem = maxFestivalExtraMemOption();
         options.deviceSummary = festivalDeviceSummary();
         options.saveBest = mFestivalHintSaveBestView != null && mFestivalHintSaveBestView.isChecked();
         return options;
@@ -5290,6 +5291,14 @@ public class myGameView extends Activity {
     private int defaultFestivalExtraMemForCores(int cores) {
         return mFestivalDeviceCapacity == null ? 0
                 : maxExtraMemForDevice(mFestivalDeviceCapacity.totalMemMb, mFestivalDeviceCapacity.availMemMb, cores);
+    }
+
+    private int maxFestivalExtraMemOption() {
+        int max = 0;
+        for (int value : mFestivalExtraMemValues) {
+            if (value > max) max = value;
+        }
+        return max;
     }
 
     private int selectedSpinnerValue(Spinner spinner, int[] values, int defaultValue) {
@@ -5505,81 +5514,100 @@ public class myGameView extends Activity {
                     return FestivalSolveResult.cancelled(mLevelText);
                 }
                 String algorithmName = algorithmName(algorithm);
-                publishProgress(FestivalProgress.status("开始 " + algorithmName + "（" + (i + 1) + "/" + algorithms.length + "）"));
-                try {
-                    long startedAt = System.currentTimeMillis();
-                    String output = FestivalSolver.solveText(mLevelText, mWorkDir, mOptions.timeLimitSec, mOptions.cores,
-                            algorithm, mOptions.extraMem, mOptions.saveBest);
-                    long elapsedMs = System.currentTimeMillis() - startedAt;
-                    publishProgress(FestivalProgress.output(
-                            "\n========== " + algorithmName + " / 用时 " + (elapsedMs / 1000.0d) + " 秒 ==========\n"
-                                    + safeOutput(output) + "\n"));
+                int[] extraMemAttempts = mOptions.extraMemAttempts();
+                for (int memIndex = 0; memIndex < extraMemAttempts.length; memIndex++) {
+                    int extraMem = extraMemAttempts[memIndex];
                     if (isCancelled()) {
                         return FestivalSolveResult.cancelled(mLevelText);
                     }
-                    boolean nativeSolved = FestivalSolver.wasSolved(output);
-                    List<String> paths = FestivalSolver.extractPaths(output);
-	                    if (paths.isEmpty()) {
-	                        if (nativeSolved) {
-	                            lastError = algorithmName + " 已解出，但没有生成 LURD 路径，请查看原生输出。";
-	                            publishProgress(FestivalProgress.status(algorithmName + " 已解出但未生成路径，继续尝试。"));
-	                        } else {
-	                            int solverTimeSec = FestivalSolver.extractSolverTimeSec(output);
-	                            if (solverTimeSec < 0) {
-	                                solverTimeSec = (int)Math.max(0, elapsedMs / 1000L);
-	                            }
-	                            String reason = FestivalSolver.extractReason(output);
-	                            if (reason.length() == 0) {
-	                                reason = "没有 SOLVED，也没有 LURD 路径";
-	                            }
-	                            boolean timeLimitReached = solverTimeSec >= Math.max(1, mOptions.timeLimitSec - 1);
-	                            if (timeLimitReached) {
-	                                lastError = algorithmName + " 用满 " + mOptions.timeLimitSec + " 秒仍未解出：" + reason;
-	                                publishProgress(FestivalProgress.status(algorithmName + " 时间用满仍未解出，继续尝试。"));
-	                            } else {
-	                                lastError = algorithmName + " 提前结束未解出，用时 " + solverTimeSec + " 秒：" + reason;
-	                                publishProgress(FestivalProgress.status(algorithmName + " 提前结束未解出，继续尝试。"));
-	                            }
-	                        }
-	                        continue;
-	                    }
-                    if (!nativeSolved) {
-                        lastError = algorithmName + " 未完成：Festival 没有打印 SOLVED，输出的 Solution 是 best/中间路径。";
-                        publishProgress(FestivalProgress.output("[未完成] Festival 没有打印 SOLVED，Solution 可能来自保存 best，不能作为提示执行。\n"));
+                    String attemptName = algorithmName;
+                    if (extraMemAttempts.length > 1) {
+                        attemptName += " / 内存 " + extraMem + "（" + (memIndex + 1) + "/" + extraMemAttempts.length + "）";
                     }
-                    String validationError = null;
-                    for (int pathIndex = 0; pathIndex < paths.size(); pathIndex++) {
-                        String path = paths.get(pathIndex);
-                        ValidationResult validation = validateSolutionPath(mStartBoard, path);
-                        if (nativeSolved && validation.valid) {
-                            publishProgress(FestivalProgress.status(algorithmName + " 通过完整路径校验，移动 " + validation.path.length() + " 步。"));
-                            return FestivalSolveResult.solved(mLevelText, validation.path);
+                    publishProgress(FestivalProgress.status("开始 " + attemptName + "（算法 " + (i + 1) + "/" + algorithms.length + "）"));
+                    try {
+                        long startedAt = System.currentTimeMillis();
+                        String output = FestivalSolver.solveText(mLevelText, mWorkDir, mOptions.timeLimitSec, mOptions.cores,
+                                algorithm, extraMem, mOptions.saveBest);
+                        long elapsedMs = System.currentTimeMillis() - startedAt;
+                        publishProgress(FestivalProgress.output(
+                                "\n========== " + attemptName + " / 用时 " + (elapsedMs / 1000.0d) + " 秒 ==========\n"
+                                        + safeOutput(output) + "\n"));
+                        if (isCancelled()) {
+                            return FestivalSolveResult.cancelled(mLevelText);
                         }
-                        String prefix = paths.size() > 1 ? "候选 " + (pathIndex + 1) + "/" + paths.size() + " " : "";
-                        if (validation.valid) {
-                            validationError = "Festival 未确认 SOLVED，已拒绝执行";
-                            publishProgress(FestivalProgress.output("[拒绝] " + prefix + "本地可完成，但 Festival 没有打印 SOLVED，不能作为提示执行。\n"));
+                        boolean nativeSolved = FestivalSolver.wasSolved(output);
+                        List<String> paths = FestivalSolver.extractPaths(output);
+                        if (paths.isEmpty()) {
+                            String reason = FestivalSolver.extractReason(output);
+                            if (nativeSolved) {
+                                lastError = attemptName + " 已解出，但没有生成 LURD 路径，请查看原生输出。";
+                                publishProgress(FestivalProgress.status(attemptName + " 已解出但未生成路径，继续尝试。"));
+                            } else {
+                                int solverTimeSec = FestivalSolver.extractSolverTimeSec(output);
+                                if (solverTimeSec < 0) {
+                                    solverTimeSec = (int)Math.max(0, elapsedMs / 1000L);
+                                }
+                                if (reason.length() == 0) {
+                                    reason = "没有 SOLVED，也没有 LURD 路径";
+                                }
+                                boolean canRetryWithMoreMemory = FestivalSolver.isMaxNodesReached(output) && memIndex + 1 < extraMemAttempts.length;
+                                if (canRetryWithMoreMemory) {
+                                    lastError = attemptName + " 节点表已满，自动提升额外内存继续。";
+                                    publishProgress(FestivalProgress.status(attemptName + " 节点表已满，提升额外内存继续。"));
+                                    publishProgress(FestivalProgress.output("[资源重试] Max nodes reached，下一次使用额外内存 "
+                                            + extraMemAttempts[memIndex + 1] + "\n"));
+                                    continue;
+                                }
+                                boolean timeLimitReached = solverTimeSec >= Math.max(1, mOptions.timeLimitSec - 1);
+                                if (timeLimitReached) {
+                                    lastError = attemptName + " 用满 " + mOptions.timeLimitSec + " 秒仍未解出：" + reason;
+                                    publishProgress(FestivalProgress.status(attemptName + " 时间用满仍未解出，继续尝试。"));
+                                } else {
+                                    lastError = attemptName + " 提前结束未解出，用时 " + solverTimeSec + " 秒：" + reason;
+                                    publishProgress(FestivalProgress.status(attemptName + " 提前结束未解出，继续尝试。"));
+                                }
+                            }
+                            continue;
+                        }
+                        if (!nativeSolved) {
+                            lastError = attemptName + " 未完成：Festival 没有打印 SOLVED，输出的 Solution 是 best/中间路径。";
+                            publishProgress(FestivalProgress.output("[未完成] Festival 没有打印 SOLVED，Solution 可能来自保存 best，不能作为提示执行。\n"));
+                        }
+                        String validationError = null;
+                        for (int pathIndex = 0; pathIndex < paths.size(); pathIndex++) {
+                            String path = paths.get(pathIndex);
+                            ValidationResult validation = validateSolutionPath(mStartBoard, path);
+                            if (nativeSolved && validation.valid) {
+                                publishProgress(FestivalProgress.status(attemptName + " 通过完整路径校验，移动 " + validation.path.length() + " 步。"));
+                                return FestivalSolveResult.solved(mLevelText, validation.path);
+                            }
+                            String prefix = paths.size() > 1 ? "候选 " + (pathIndex + 1) + "/" + paths.size() + " " : "";
+                            if (validation.valid) {
+                                validationError = "Festival 未确认 SOLVED，已拒绝执行";
+                                publishProgress(FestivalProgress.output("[拒绝] " + prefix + "本地可完成，但 Festival 没有打印 SOLVED，不能作为提示执行。\n"));
+                            } else {
+                                validationError = validation.error;
+                                publishProgress(FestivalProgress.output("[校验失败] " + prefix + validation.error + "\n"));
+                            }
+                        }
+                        if (!nativeSolved) {
+                            if (validationError != null && validationError.length() > 0) {
+                                lastError = attemptName + " 未完成：Festival 没有打印 SOLVED；本地校验：" + validationError;
+                            }
+                            publishProgress(FestivalProgress.status(attemptName + " 未真正解出，继续尝试。"));
                         } else {
-                            validationError = validation.error;
-                            publishProgress(FestivalProgress.output("[校验失败] " + prefix + validation.error + "\n"));
+                            lastError = attemptName + " 校验失败：" + validationError;
+                            publishProgress(FestivalProgress.status(attemptName + " 校验失败，继续尝试。"));
                         }
-                    }
-                    if (!nativeSolved) {
-                        if (validationError != null && validationError.length() > 0) {
-                            lastError = algorithmName + " 未完成：Festival 没有打印 SOLVED；本地校验：" + validationError;
+                    } catch (Throwable ex) {
+                        lastError = ex.getMessage();
+                        if (lastError == null || lastError.length() == 0) {
+                            lastError = ex.getClass().getSimpleName();
                         }
-                        publishProgress(FestivalProgress.status(algorithmName + " 未真正解出，继续尝试。"));
-                    } else {
-                        lastError = algorithmName + " 校验失败：" + validationError;
-                        publishProgress(FestivalProgress.status(algorithmName + " 校验失败，继续尝试。"));
+                        publishProgress(FestivalProgress.output("[异常] " + attemptName + ": " + lastError + "\n"));
+                        publishProgress(FestivalProgress.status(attemptName + " 异常，继续尝试。"));
                     }
-                } catch (Throwable ex) {
-                    lastError = ex.getMessage();
-                    if (lastError == null || lastError.length() == 0) {
-                        lastError = ex.getClass().getSimpleName();
-                    }
-                    publishProgress(FestivalProgress.output("[异常] " + algorithmName + ": " + lastError + "\n"));
-                    publishProgress(FestivalProgress.status(algorithmName + " 异常，继续尝试。"));
                 }
             }
             if (lastError == null || lastError.length() == 0) {
@@ -5625,11 +5653,12 @@ public class myGameView extends Activity {
 
     private static class FestivalHintOptions {
         int timeLimitSec;
-        int algorithm;
-        int cores;
-        int extraMem;
-        String deviceSummary;
-        boolean saveBest;
+	        int algorithm;
+	        int cores;
+	        int extraMem;
+	        int maxExtraMem;
+	        String deviceSummary;
+	        boolean saveBest;
 
         int[] algorithms() {
             if (algorithm == FESTIVAL_ALGORITHM_MULTI) {
@@ -5638,11 +5667,21 @@ public class myGameView extends Activity {
             return new int[]{algorithm};
         }
 
+        int[] extraMemAttempts() {
+            int start = Math.max(0, extraMem);
+            int end = Math.max(start, maxExtraMem);
+            int[] values = new int[end - start + 1];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = start + i;
+            }
+            return values;
+        }
+
         String describe() {
             return "时间限制: " + timeLimitSec + " 秒\n"
                     + "算法: " + algorithmName(algorithm) + "\n"
                     + "线程: " + cores + "\n"
-                    + "额外内存: " + extraMem + "\n"
+                    + "额外内存: " + extraMem + (maxExtraMem > extraMem ? "（节点满时自动升至 " + maxExtraMem + "）" : "") + "\n"
                     + "设备: " + (deviceSummary == null ? "未检测" : deviceSummary) + "\n"
                     + "保存 best: " + (saveBest ? "是（仅诊断，不作为提示）" : "否");
         }
