@@ -83,6 +83,7 @@ public class myGameView extends Activity {
     private final StringBuilder mFestivalHintLog = new StringBuilder();
     private Runnable mFestivalHintTicker;
     private boolean mFestivalHintRunning;
+    private int mFestivalHintPendingAdvance;
     private long mFestivalHintStartedAt;
     private String mFestivalHintStatusText = "未求解";
 
@@ -371,6 +372,11 @@ public class myGameView extends Activity {
     //redo -- 正推
     private void UpData1(int i) {
         if ((i != 1 || m_nStep <= 0 || m_lstMovReDo.isEmpty()) && mMap.d_Moves >= mMap.m_PicWidth) {
+            if (m_bACT_ERROR) {
+                failFestivalHintPendingMove("动作无法执行");
+            } else {
+                completeFestivalHintPendingMove();
+            }
             if (myClearance()) {
                 if (m_bMoved) {
                     if (myMaps.curMap.Level_id > 0) {
@@ -409,6 +415,11 @@ public class myGameView extends Activity {
             } else {
                 while (m_nStep > 0) reDo1();
                 mMap.invalidate();
+            }
+            if (m_bACT_ERROR) {
+                failFestivalHintPendingMove("动作无法执行");
+            } else if (m_nStep == 0) {
+                completeFestivalHintPendingMove();
             }
             if (myClearance()) {
                 m_bYanshi = false;
@@ -449,6 +460,11 @@ public class myGameView extends Activity {
                     m_bPush = false;
                 } else {
                     reDo1();
+                }
+                if (m_bACT_ERROR) {
+                    failFestivalHintPendingMove("动作无法执行");
+                } else if (m_nStep == 0) {
+                    completeFestivalHintPendingMove();
                 }
                 myMaps.m_Sets[18] = 1;  //ReDo
                 if (myMaps.isSimpleSkin || myMaps.isSkin_200 == 200 || myMaps.m_Sets[27] == 0 || myMaps.m_Sets[10] < 3){
@@ -4860,12 +4876,18 @@ public class myGameView extends Activity {
             return false;
         }
 
-        char move = path.charAt(0);
-        if ("lurdLURD".indexOf(move) < 0) {
+        int moveCount = nextFestivalHintMoveCount(path);
+        if (moveCount < 0) {
             MyToast.showToast(this, "求解器返回动作无效！", Toast.LENGTH_SHORT);
             clearFestivalHintCache("缓存动作非法");
             return false;
         }
+        if (moveCount == 0) {
+            MyToast.showToast(this, "缓存已无后续推箱动作！", Toast.LENGTH_SHORT);
+            clearFestivalHintCache("缓存已无后续推箱动作");
+            return true;
+        }
+        String segment = path.substring(0, moveCount);
 
         StopMicro();
         bt_Sel.setChecked(false);
@@ -4878,27 +4900,68 @@ public class myGameView extends Activity {
         m_nStep = 0;
         mMap.d_Moves = mMap.m_PicWidth;
 
-        formatPath(String.valueOf(move), false);
+        formatPath(segment, false);
         if (m_lstMovReDo.isEmpty()) {
             MyToast.showToast(this, "提示动作无法解析！", Toast.LENGTH_SHORT);
             clearFestivalHintCache("动作无法解析");
             return false;
         }
 
-        m_nStep = 1;
+        m_nStep = m_lstMovReDo.size();
         mMap.Box_Row0 = -1;
         mMap.curMoves = 0;
+        mFestivalHintPendingAdvance = m_nStep;
         UpData1(1);
         if (m_bACT_ERROR) {
-            MyToast.showToast(this, "提示动作无法执行！", Toast.LENGTH_SHORT);
-            clearFestivalHintCache("动作无法执行");
+            failFestivalHintPendingMove("动作无法执行");
             return false;
         }
+        return true;
+    }
+
+    private int nextFestivalHintMoveCount(String path) {
+        boolean pushed = false;
+        int count = 0;
+        for (int i = 0; i < path.length(); i++) {
+            char move = path.charAt(i);
+            if (!isFestivalHintMove(move)) {
+                return pushed ? count : -1;
+            }
+            boolean push = isFestivalHintPush(move);
+            if (pushed && !push) {
+                break;
+            }
+            count++;
+            if (push) {
+                pushed = true;
+            }
+        }
+        return pushed ? count : 0;
+    }
+
+    private boolean isFestivalHintMove(char move) {
+        return "lurdLURD".indexOf(move) >= 0;
+    }
+
+    private boolean isFestivalHintPush(char move) {
+        return "LURD".indexOf(move) >= 0;
+    }
+
+    private void completeFestivalHintPendingMove() {
+        if (mFestivalHintPendingAdvance <= 0) return;
+        int steps = mFestivalHintPendingAdvance;
+        mFestivalHintPendingAdvance = 0;
         if (mFestivalHintCache != null) {
-            mFestivalHintCache.advance(1, exportFestivalLevel(m_cArray));
+            mFestivalHintCache.advance(steps, exportFestivalLevel(m_cArray));
             updateFestivalHintCacheView();
         }
-        return true;
+    }
+
+    private void failFestivalHintPendingMove(String reason) {
+        if (mFestivalHintPendingAdvance <= 0) return;
+        mFestivalHintPendingAdvance = 0;
+        MyToast.showToast(this, "提示动作无法执行！", Toast.LENGTH_SHORT);
+        clearFestivalHintCache(reason);
     }
 
     private void showFestivalHintDialog(boolean missingCache) {
@@ -5376,7 +5439,7 @@ public class myGameView extends Activity {
             return;
         }
         mFestivalHintCache = new FestivalHintCache(result.levelText, result.path);
-        setFestivalHintStatus("求解成功，已缓存完整路径，正在执行第一步。");
+        setFestivalHintStatus("求解成功，已缓存完整路径，正在执行第一个推箱段。");
         updateFestivalHintCacheView();
         applyFestivalHintMove(mFestivalHintCache.remainingPath());
     }
