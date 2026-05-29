@@ -90,6 +90,7 @@ public class myGameView extends Activity {
     private String mFestivalHintStatusText = "未求解";
 
     private static final int FESTIVAL_ALGORITHM_MULTI = -100;
+    private static final int FESTIVAL_EXTRA_MEM_AUTO = -1;
     private static final String PREF_FESTIVAL_HINT = "FestivalHint";
     private static final String PREF_FESTIVAL_TIME = "timeLimit";
     private static final String PREF_FESTIVAL_ALGORITHM = "algorithm";
@@ -102,8 +103,8 @@ public class myGameView extends Activity {
     private static final int[] FESTIVAL_ALGORITHM_VALUES = {FESTIVAL_ALGORITHM_MULTI, FestivalSolver.AUTO_ALGORITHM, 7, 0, 1, 2, 3, 4, 5, 6};
     private String[] mFestivalCoreLabels = {"1 线程"};
     private int[] mFestivalCoreValues = {1};
-    private String[] mFestivalExtraMemLabels = {"0（基础）"};
-    private int[] mFestivalExtraMemValues = {0};
+    private String[] mFestivalExtraMemLabels = {"工业自动"};
+    private int[] mFestivalExtraMemValues = {FESTIVAL_EXTRA_MEM_AUTO};
     private FestivalDeviceCapacity mFestivalDeviceCapacity;
 
     AlertDialog AotoNextDlg;
@@ -5271,7 +5272,11 @@ public class myGameView extends Activity {
         mFestivalExtraMemLabels = new String[mFestivalExtraMemValues.length];
         for (int i = 0; i < mFestivalExtraMemValues.length; i++) {
             int value = mFestivalExtraMemValues[i];
-            mFestivalExtraMemLabels[i] = value + (value == mFestivalDeviceCapacity.maxExtraMem ? "（本机最大）" : "");
+            if (value == FESTIVAL_EXTRA_MEM_AUTO) {
+                mFestivalExtraMemLabels[i] = "工业自动（优先最高）";
+            } else {
+                mFestivalExtraMemLabels[i] = value + (value == mFestivalDeviceCapacity.maxExtraMem ? "（本机最大）" : "");
+            }
         }
 
         if (mFestivalDeviceView != null) {
@@ -5295,7 +5300,11 @@ public class myGameView extends Activity {
         mFestivalExtraMemLabels = new String[mFestivalExtraMemValues.length];
         for (int i = 0; i < mFestivalExtraMemValues.length; i++) {
             int value = mFestivalExtraMemValues[i];
-            mFestivalExtraMemLabels[i] = value + (value == maxExtraMem ? "（当前线程最大）" : "");
+            if (value == FESTIVAL_EXTRA_MEM_AUTO) {
+                mFestivalExtraMemLabels[i] = "工业自动（优先最高）";
+            } else {
+                mFestivalExtraMemLabels[i] = value + (value == maxExtraMem ? "（当前线程最大）" : "");
+            }
         }
     }
 
@@ -5335,9 +5344,10 @@ public class myGameView extends Activity {
 
     private int[] buildFestivalExtraMemValues(int maxExtraMem) {
         int safeMax = Math.max(0, Math.min(6, maxExtraMem));
-        int[] out = new int[safeMax + 1];
+        int[] out = new int[safeMax + 2];
+        out[0] = FESTIVAL_EXTRA_MEM_AUTO;
         for (int i = 0; i <= safeMax; i++) {
-            out[i] = i;
+            out[i + 1] = i;
         }
         return out;
     }
@@ -5914,14 +5924,25 @@ public class myGameView extends Activity {
 
         int[] algorithms() {
             if (algorithm == FESTIVAL_ALGORITHM_MULTI) {
+                if (cores > 1) {
+                    return new int[]{FestivalSolver.AUTO_ALGORITHM};
+                }
                 return FestivalSolver.DEFAULT_ALGORITHMS;
             }
             return new int[]{algorithm};
         }
 
         int[] extraMemAttempts() {
+            int safeMax = Math.max(0, maxExtraMem);
+            if (extraMem == FESTIVAL_EXTRA_MEM_AUTO) {
+                int[] values = new int[safeMax + 1];
+                for (int i = 0; i <= safeMax; i++) {
+                    values[i] = safeMax - i;
+                }
+                return values;
+            }
             int start = Math.max(0, extraMem);
-            int end = Math.max(start, maxExtraMem);
+            int end = Math.max(start, safeMax);
             int[] values = new int[end - start + 1];
             for (int i = 0; i < values.length; i++) {
                 values[i] = start + i;
@@ -5930,10 +5951,13 @@ public class myGameView extends Activity {
         }
 
         String describe() {
+            String extraMemText = extraMem == FESTIVAL_EXTRA_MEM_AUTO
+                    ? "工业自动（从 " + maxExtraMem + " 降到 0）"
+                    : extraMem + (maxExtraMem > extraMem ? "（节点满时自动升至 " + maxExtraMem + "）" : "");
             return "时间限制: " + timeLimitSec + " 秒\n"
                     + "算法: " + algorithmName(algorithm) + "\n"
                     + "线程: " + cores + "\n"
-                    + "额外内存: " + extraMem + (maxExtraMem > extraMem ? "（节点满时自动升至 " + maxExtraMem + "）" : "") + "\n"
+                    + "额外内存: " + extraMemText + "\n"
                     + "设备: " + (deviceSummary == null ? "未检测" : deviceSummary) + "\n"
                     + "保存 best: " + (saveBest ? "是（仅诊断，不作为提示）" : "否");
         }

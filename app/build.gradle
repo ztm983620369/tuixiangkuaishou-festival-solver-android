@@ -11,8 +11,8 @@ android {
         applicationId "my.boxman"
         minSdk 23
         targetSdk 28
-        versionCode 24
-        versionName "9.89-festival-tight-hint"
+        versionCode 25
+        versionName "9.89-festival-auto-memory"
     }
 }
 
