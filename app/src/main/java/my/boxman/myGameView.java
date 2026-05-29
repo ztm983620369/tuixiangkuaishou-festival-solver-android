@@ -4936,6 +4936,10 @@ public class myGameView extends Activity {
                 return pushed ? count : -1;
             }
             boolean push = isFestivalHintPush(move);
+            if (pushed && !push && !festivalHintWalkLeadsToTrackedBoxPush(path, i, board,
+                    manRow, manCol, trackedBoxRow, trackedBoxCol)) {
+                break;
+            }
             int dir = festivalHintDirection(move);
             int nextManRow = manRow + dr_reDo1[dir];
             int nextManCol = manCol + dc_reDo1[dir];
@@ -4971,6 +4975,40 @@ public class myGameView extends Activity {
             }
         }
         return pushed ? count : 0;
+    }
+
+    private boolean festivalHintWalkLeadsToTrackedBoxPush(String path, int startIndex, char[][] sourceBoard,
+                                                          int manRow, int manCol, int trackedBoxRow, int trackedBoxCol) {
+        char[][] board = copyFestivalHintBoard(sourceBoard);
+        int row = manRow;
+        int col = manCol;
+        for (int i = startIndex; i < path.length(); i++) {
+            char move = path.charAt(i);
+            if (!isFestivalHintMove(move)) {
+                return false;
+            }
+            int dir = festivalHintDirection(move);
+            int nextRow = row + dr_reDo1[dir];
+            int nextCol = col + dc_reDo1[dir];
+            if (isFestivalHintPush(move)) {
+                int nextBoxRow = row + dr_reDo1[dir + 4];
+                int nextBoxCol = col + dc_reDo1[dir + 4];
+                if (!isFestivalHintInside(board, nextRow, nextCol)
+                        || !isFestivalHintInside(board, nextBoxRow, nextBoxCol)
+                        || !isFestivalHintBox(board[nextRow][nextCol])
+                        || !isFestivalHintFree(board[nextBoxRow][nextBoxCol])) {
+                    return false;
+                }
+                return nextRow == trackedBoxRow && nextCol == trackedBoxCol;
+            }
+            if (!isFestivalHintInside(board, nextRow, nextCol) || !isFestivalHintFree(board[nextRow][nextCol])) {
+                return false;
+            }
+            moveFestivalHintMan(board, row, col, nextRow, nextCol);
+            row = nextRow;
+            col = nextCol;
+        }
+        return false;
     }
 
     private char[][] copyFestivalHintBoard(char[][] source) {

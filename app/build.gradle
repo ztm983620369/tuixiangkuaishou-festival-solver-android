@@ -11,8 +11,8 @@ android {
         applicationId "my.boxman"
         minSdk 23
         targetSdk 28
-        versionCode 23
-        versionName "9.89-festival-cancel"
+        versionCode 24
+        versionName "9.89-festival-tight-hint"
     }
 }
 
