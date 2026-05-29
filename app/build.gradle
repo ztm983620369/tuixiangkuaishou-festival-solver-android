@@ -11,8 +11,8 @@ android {
         applicationId "my.boxman"
         minSdk 23
         targetSdk 28
-        versionCode 19
-        versionName "9.89-festival-push-hint"
+        versionCode 20
+        versionName "9.89-festival-box-hint"
     }
 }
 

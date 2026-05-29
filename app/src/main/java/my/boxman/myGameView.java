@@ -4920,6 +4920,12 @@ public class myGameView extends Activity {
     }
 
     private int nextFestivalHintMoveCount(String path) {
+        if (m_cArray == null || m_cArray.length == 0) return -1;
+        char[][] board = copyFestivalHintBoard(m_cArray);
+        int manRow = m_nRow;
+        int manCol = m_nCol;
+        int trackedBoxRow = -1;
+        int trackedBoxCol = -1;
         boolean pushed = false;
         int count = 0;
         for (int i = 0; i < path.length(); i++) {
@@ -4931,12 +4937,50 @@ public class myGameView extends Activity {
             if (pushed && !push) {
                 break;
             }
+            int dir = festivalHintDirection(move);
+            int nextManRow = manRow + dr_reDo1[dir];
+            int nextManCol = manCol + dc_reDo1[dir];
+            if (push) {
+                int nextBoxRow = manRow + dr_reDo1[dir + 4];
+                int nextBoxCol = manCol + dc_reDo1[dir + 4];
+                if (!isFestivalHintInside(board, nextManRow, nextManCol)
+                        || !isFestivalHintInside(board, nextBoxRow, nextBoxCol)
+                        || !isFestivalHintBox(board[nextManRow][nextManCol])
+                        || !isFestivalHintFree(board[nextBoxRow][nextBoxCol])) {
+                    return pushed ? count : -1;
+                }
+                if (pushed && (nextManRow != trackedBoxRow || nextManCol != trackedBoxCol)) {
+                    break;
+                }
+                moveFestivalHintBox(board, manRow, manCol, nextManRow, nextManCol, nextBoxRow, nextBoxCol);
+                trackedBoxRow = nextBoxRow;
+                trackedBoxCol = nextBoxCol;
+                manRow = nextManRow;
+                manCol = nextManCol;
+            } else {
+                if (!isFestivalHintInside(board, nextManRow, nextManCol)
+                        || !isFestivalHintFree(board[nextManRow][nextManCol])) {
+                    return pushed ? count : -1;
+                }
+                moveFestivalHintMan(board, manRow, manCol, nextManRow, nextManCol);
+                manRow = nextManRow;
+                manCol = nextManCol;
+            }
             count++;
             if (push) {
                 pushed = true;
             }
         }
         return pushed ? count : 0;
+    }
+
+    private char[][] copyFestivalHintBoard(char[][] source) {
+        char[][] out = new char[source.length][];
+        for (int i = 0; i < source.length; i++) {
+            out[i] = new char[source[i].length];
+            System.arraycopy(source[i], 0, out[i], 0, source[i].length);
+        }
+        return out;
     }
 
     private boolean isFestivalHintMove(char move) {
@@ -4946,6 +4990,49 @@ public class myGameView extends Activity {
     private boolean isFestivalHintPush(char move) {
         return "LURD".indexOf(move) >= 0;
     }
+
+    private int festivalHintDirection(char move) {
+        switch (move) {
+            case 'l':
+            case 'L':
+                return 1;
+            case 'u':
+            case 'U':
+                return 2;
+            case 'r':
+            case 'R':
+                return 3;
+            case 'd':
+            case 'D':
+                return 4;
+            default:
+                return 0;
+        }
+    }
+
+    private boolean isFestivalHintInside(char[][] board, int row, int col) {
+        return row >= 0 && row < board.length && col >= 0 && col < board[row].length;
+    }
+
+    private boolean isFestivalHintFree(char value) {
+        return value == '-' || value == '.';
+    }
+
+    private boolean isFestivalHintBox(char value) {
+        return value == '$' || value == '*';
+    }
+
+    private void moveFestivalHintMan(char[][] board, int fromRow, int fromCol, int toRow, int toCol) {
+        board[fromRow][fromCol] = board[fromRow][fromCol] == '+' ? '.' : '-';
+        board[toRow][toCol] = board[toRow][toCol] == '.' ? '+' : '@';
+    }
+
+    private void moveFestivalHintBox(char[][] board, int manRow, int manCol, int boxRow, int boxCol, int toRow, int toCol) {
+        board[manRow][manCol] = board[manRow][manCol] == '+' ? '.' : '-';
+        board[toRow][toCol] = board[toRow][toCol] == '.' ? '*' : '$';
+        board[boxRow][boxCol] = board[boxRow][boxCol] == '*' ? '+' : '@';
+    }
+
 
     private void completeFestivalHintPendingMove() {
         if (mFestivalHintPendingAdvance <= 0) return;
