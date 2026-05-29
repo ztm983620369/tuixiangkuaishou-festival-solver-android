@@ -89,8 +89,8 @@ public class myGameView extends Activity {
     private static final String PREF_FESTIVAL_CORES = "cores";
     private static final String PREF_FESTIVAL_EXTRA_MEM = "extraMem";
     private static final String PREF_FESTIVAL_SAVE_BEST = "saveBest";
-    private static final String[] FESTIVAL_TIME_LABELS = {"8 秒", "15 秒", "30 秒", "60 秒", "120 秒", "300 秒"};
-    private static final int[] FESTIVAL_TIME_VALUES = {8, 15, 30, 60, 120, 300};
+    private static final String[] FESTIVAL_TIME_LABELS = {"15 秒", "30 秒", "60 秒", "120 秒", "300 秒", "600 秒", "1800 秒", "3600 秒"};
+    private static final int[] FESTIVAL_TIME_VALUES = {15, 30, 60, 120, 300, 600, 1800, 3600};
     private static final String[] FESTIVAL_ALGORITHM_LABELS = {"工业自动（逐个校验）", "Festival 自动", "算法 7", "算法 0", "算法 1", "算法 2", "算法 3", "算法 4", "算法 5", "算法 6"};
     private static final int[] FESTIVAL_ALGORITHM_VALUES = {FESTIVAL_ALGORITHM_MULTI, FestivalSolver.AUTO_ALGORITHM, 7, 0, 1, 2, 3, 4, 5, 6};
     private static final String[] FESTIVAL_CORES_LABELS = {"1 线程（低内存）", "2 线程"};
@@ -5330,8 +5330,13 @@ public class myGameView extends Activity {
                     boolean nativeSolved = FestivalSolver.wasSolved(output);
                     List<String> paths = FestivalSolver.extractPaths(output);
                     if (paths.isEmpty()) {
-                        lastError = "未输出 LURD 路径：" + FestivalSolver.trimSolverMessage(output);
-                        publishProgress(FestivalProgress.status(algorithmName + " 未返回路径，继续尝试。"));
+                        if (nativeSolved) {
+                            lastError = algorithmName + " 已解出，但没有生成 LURD 路径，请查看原生输出。";
+                            publishProgress(FestivalProgress.status(algorithmName + " 已解出但未生成路径，继续尝试。"));
+                        } else {
+                            lastError = algorithmName + " 未在 " + mOptions.timeLimitSec + " 秒内解出；没有 SOLVED，也没有 LURD 路径。";
+                            publishProgress(FestivalProgress.status(algorithmName + " 超时/未解出，继续尝试。"));
+                        }
                         continue;
                     }
                     if (!nativeSolved) {

@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 public final class FestivalSolver {
-    public static final int DEFAULT_TIME_LIMIT_SEC = 8;
+    public static final int DEFAULT_TIME_LIMIT_SEC = 15;
     public static final int AUTO_ALGORITHM = -1;
     public static final int[] DEFAULT_ALGORITHMS = {7, AUTO_ALGORITHM, 0, 1, 2, 3, 4, 5, 6};
 

@@ -144,7 +144,7 @@ Java_my_boxman_solver_FestivalSolver_solveNative(
     if (dir.empty()) return env->NewStringUTF("Missing files directory");
     if (level.empty()) return env->NewStringUTF("Missing level text");
 
-    int safeTime = std::max(1, std::min(300, static_cast<int>(timeLimitSec)));
+    int safeTime = std::max(1, std::min(3600, static_cast<int>(timeLimitSec)));
     int safeCores = std::max(1, std::min(2, static_cast<int>(requestedCores)));
     int safeExtraMem = std::max(0, std::min(2, static_cast<int>(extraMem)));
 
