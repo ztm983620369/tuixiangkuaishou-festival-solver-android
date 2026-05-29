@@ -1,6 +1,7 @@
 #include <jni.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -24,6 +25,7 @@ extern int total_levels_tried;
 extern int total_levels_solved;
 extern int global_total_pushes;
 extern int global_total_moves;
+extern std::atomic<int> festival_cancel_requested;
 
 static std::mutex solver_mutex;
 
@@ -104,6 +106,7 @@ private:
 };
 
 static void reset_festival_globals() {
+    festival_cancel_requested.store(0);
     time_limit = 600;
     verbose = 1;
     level_id = 0;
@@ -254,4 +257,9 @@ Java_my_boxman_solver_FestivalSolver_solveNative(
     output += std::to_string(rc);
     output += "]";
     return env->NewStringUTF(output.c_str());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_my_boxman_solver_FestivalSolver_cancelNative(JNIEnv *, jclass) {
+    festival_cancel_requested.store(1);
 }

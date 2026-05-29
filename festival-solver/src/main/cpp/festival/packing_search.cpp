@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <atomic>
 
 #include "packing_search.h"
 
@@ -29,6 +30,7 @@
 #include "hf_search.h"
 #include "stuck.h"
 
+extern std::atomic<int> festival_cancel_requested;
 
 int compute_start_zones(int_board start_zones)
 {
@@ -168,6 +170,10 @@ void packing_search(board b_in, int time_allocation, int search_mode, tree *t, h
 	{
 		iter_num++;
 
+		if (festival_cancel_requested.load()) {
+			strcpy(global_fail_reason, "Cancelled");
+			break;
+		}
 		if (time_limit_exceeded(time_allocation, local_start_time)) break;
 		if (any_core_solved) break;
 

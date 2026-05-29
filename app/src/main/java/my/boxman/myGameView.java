@@ -83,6 +83,8 @@ public class myGameView extends Activity {
     private final StringBuilder mFestivalHintLog = new StringBuilder();
     private Runnable mFestivalHintTicker;
     private boolean mFestivalHintRunning;
+    private boolean mFestivalHintCancelRequested;
+    private boolean mFestivalHintDismissAfterCancel;
     private int mFestivalHintPendingAdvance;
     private long mFestivalHintStartedAt;
     private String mFestivalHintStatusText = "未求解";
@@ -5146,6 +5148,27 @@ public class myGameView extends Activity {
                 configureFestivalHintDialogButtons();
             }
         });
+        dialog.setOnKeyListener(new DialogInterface.OnKeyListener() {
+            @Override
+            public boolean onKey(DialogInterface dialogInterface, int keyCode, KeyEvent event) {
+                if (keyCode == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
+                    if (mFestivalHintRunning) {
+                        requestFestivalCancel("关闭前正在取消求解。", true);
+                        return true;
+                    }
+                }
+                return false;
+            }
+        });
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
+            @Override
+            public void onDismiss(DialogInterface dialogInterface) {
+                if (mFestivalHintRunning) {
+                    requestFestivalCancel("关闭前正在取消求解。", true);
+                }
+            }
+        });
         return dialog;
     }
 
@@ -5310,7 +5333,7 @@ public class myGameView extends Activity {
         if (mFestivalHintDialog == null || !mFestivalHintDialog.isShowing()) return;
         Button positive = mFestivalHintDialog.getButton(DialogInterface.BUTTON_POSITIVE);
         if (positive != null) {
-            positive.setText(mFestivalHintRunning ? "求解中" : "开始求解");
+            positive.setText(mFestivalHintRunning ? (mFestivalHintCancelRequested ? "取消中" : "求解中") : "开始求解");
             positive.setEnabled(!mFestivalHintRunning);
             positive.setOnClickListener(new View.OnClickListener() {
                 @Override
@@ -5321,14 +5344,30 @@ public class myGameView extends Activity {
         }
         Button neutral = mFestivalHintDialog.getButton(DialogInterface.BUTTON_NEUTRAL);
         if (neutral != null) {
-            neutral.setText(mFestivalHintRunning ? "取消求解" : "清缓存");
+            neutral.setText(mFestivalHintRunning ? (mFestivalHintCancelRequested ? "取消中" : "取消求解") : "清缓存");
+            neutral.setEnabled(!mFestivalHintRunning || !mFestivalHintCancelRequested);
             neutral.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
                     if (mFestivalHintRunning) {
-                        cancelFestivalHintTask();
+                        requestFestivalCancel("已请求取消，等待原生求解返回。", false);
                     } else {
                         clearFestivalHintCache("手动清除缓存");
+                    }
+                }
+            });
+        }
+        Button negative = mFestivalHintDialog.getButton(DialogInterface.BUTTON_NEGATIVE);
+        if (negative != null) {
+            negative.setText(mFestivalHintRunning ? "取消并关闭" : "关闭");
+            negative.setEnabled(!mFestivalHintRunning || !mFestivalHintCancelRequested);
+            negative.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    if (mFestivalHintRunning) {
+                        requestFestivalCancel("关闭前正在取消求解。", true);
+                    } else {
+                        mFestivalHintDialog.dismiss();
                     }
                 }
             });
@@ -5488,6 +5527,8 @@ public class myGameView extends Activity {
 
     private void onFestivalSolveStarted() {
         mFestivalHintRunning = true;
+        mFestivalHintCancelRequested = false;
+        mFestivalHintDismissAfterCancel = false;
         mFestivalHintStartedAt = System.currentTimeMillis();
         if (bt_Hint != null) bt_Hint.setEnabled(false);
         setFestivalHintStatus("求解中，已运行 0 秒。");
@@ -5496,8 +5537,12 @@ public class myGameView extends Activity {
     }
 
     private void onFestivalSolveFinished(FestivalSolveResult result) {
+        boolean cancelled = mFestivalHintCancelRequested || (result != null && result.cancelled);
+        boolean dismissAfterCancel = mFestivalHintDismissAfterCancel;
         mFestivalHintTask = null;
         mFestivalHintRunning = false;
+        mFestivalHintCancelRequested = false;
+        mFestivalHintDismissAfterCancel = false;
         m_bBusing = false;
         stopFestivalHintTicker();
         mFestivalHintPendingAdvance = 0;
@@ -5509,8 +5554,9 @@ public class myGameView extends Activity {
         if (isFinishing() || m_cArray == null) {
             return;
         }
-        if (result != null && result.cancelled) {
+        if (cancelled) {
             setFestivalHintStatus("求解已取消。");
+            dismissFestivalDialogIfNeeded(dismissAfterCancel);
             return;
         }
         if (result == null || result.path == null || result.path.length() == 0) {
@@ -5529,23 +5575,44 @@ public class myGameView extends Activity {
     }
 
     private void onFestivalSolveCancelled() {
+        boolean dismissAfterCancel = mFestivalHintDismissAfterCancel;
         mFestivalHintTask = null;
         mFestivalHintRunning = false;
+        mFestivalHintCancelRequested = false;
+        mFestivalHintDismissAfterCancel = false;
         m_bBusing = false;
         stopFestivalHintTicker();
+        mFestivalHintPendingAdvance = 0;
         if (bt_Hint != null) {
             bt_Hint.setEnabled(true);
             bt_Hint.setChecked(false);
         }
         setFestivalHintStatus("求解已取消。");
         configureFestivalHintDialogButtons();
+        dismissFestivalDialogIfNeeded(dismissAfterCancel);
     }
 
     private void cancelFestivalHintTask() {
-        if (mFestivalHintTask != null && mFestivalHintTask.getStatus() == AsyncTask.Status.RUNNING) {
+        requestFestivalCancel("已请求取消，等待原生求解返回。", false);
+    }
+
+    private void requestFestivalCancel(String status, boolean dismissAfterCancel) {
+        if (mFestivalHintTask == null || mFestivalHintTask.getStatus() != AsyncTask.Status.RUNNING) {
+            return;
+        }
+        mFestivalHintDismissAfterCancel |= dismissAfterCancel;
+        if (!mFestivalHintCancelRequested) {
+            mFestivalHintCancelRequested = true;
             mFestivalHintTask.cancel(true);
-            setFestivalHintStatus("已请求取消，等待原生求解返回。");
-            configureFestivalHintDialogButtons();
+            FestivalSolver.requestCancel();
+        }
+        setFestivalHintStatus(status);
+        configureFestivalHintDialogButtons();
+    }
+
+    private void dismissFestivalDialogIfNeeded(boolean dismiss) {
+        if (dismiss && mFestivalHintDialog != null && mFestivalHintDialog.isShowing()) {
+            mFestivalHintDialog.dismiss();
         }
     }
 
@@ -5677,12 +5744,12 @@ public class myGameView extends Activity {
                         String output = FestivalSolver.solveText(mLevelText, mWorkDir, mOptions.timeLimitSec, mOptions.cores,
                                 algorithm, extraMem, mOptions.saveBest);
                         long elapsedMs = System.currentTimeMillis() - startedAt;
-                        publishProgress(FestivalProgress.output(
-                                "\n========== " + attemptName + " / 用时 " + (elapsedMs / 1000.0d) + " 秒 ==========\n"
-                                        + safeOutput(output) + "\n"));
                         if (isCancelled()) {
                             return FestivalSolveResult.cancelled(mLevelText);
                         }
+                        publishProgress(FestivalProgress.output(
+                                "\n========== " + attemptName + " / 用时 " + (elapsedMs / 1000.0d) + " 秒 ==========\n"
+                                        + safeOutput(output) + "\n"));
                         boolean nativeSolved = FestivalSolver.wasSolved(output);
                         List<String> paths = FestivalSolver.extractPaths(output);
                         if (paths.isEmpty()) {

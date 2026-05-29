@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
+#include <atomic>
 
 //#include <cstdint>
 
@@ -44,6 +45,7 @@ helper helpers[8];
 
 int forced_alg = -1;
 //int forced_alg = 0;
+extern std::atomic<int> festival_cancel_requested;
 
 #define FROM_LEVEL 1
 
@@ -292,6 +294,7 @@ void solve_with_alg(board b, int time_allocation, int strategy_index, helper *h)
 	};
 
 	if (time_allocation <= 0) return;
+	if (festival_cancel_requested.load()) return;
 
 	reset_helper(h);
 	t = search_trees + h->my_core;
@@ -309,6 +312,7 @@ void solve_with_alg(board b, int time_allocation, int strategy_index, helper *h)
 	local_start_time = (int)time(0);
 	
 	packing_search_control(b, time_allocation / 3, search_type, t, h);
+	if (festival_cancel_requested.load()) return;
 
 	if (setup_plan_features(search_type, h) == 0)
 		return;
@@ -380,6 +384,7 @@ void solve_with_time_control_single_core(board b)
 
 	for (i = 0; i < 8; i++)
 	{
+		if (festival_cancel_requested.load()) return;
 		search_time = get_search_time(1 / (double)(8 - i));
 
 		prepare_work_element(b, search_time, i, helpers + 0, &we);
@@ -424,6 +429,10 @@ void solve_with_time_control_two_cores(board b)
 
 	for (i = 0; i < 4; i++)
 	{
+		if (festival_cancel_requested.load()) {
+			pthread_attr_destroy(&attr);
+			return;
+		}
 		search_time = get_search_time(1 / (double)(4 - i));
 
 		prepare_work_element(b, search_time, i*2 + 0, helpers + 0, &we_0);
@@ -463,6 +472,10 @@ void solve_with_time_control_four_cores(board b)
 
 	for (i = 0; i < 2; i++)
 	{
+		if (festival_cancel_requested.load()) {
+			pthread_attr_destroy(&attr);
+			return;
+		}
 		search_time = get_search_time(1 / (double)(2 - i));
 
 		for (j = 0 ; j < 4 ; j++)
@@ -493,7 +506,7 @@ void solve_with_time_control_eight_cores(board b)
 	work_element we[8];
 	int rc[8];
 	pthread_t threads[8];
-	int i,search_time;
+	int i,search_time,started_threads;
 
 	pthread_attr_t attr;
 	attrPrep(&attr); //fastrgv
@@ -501,13 +514,16 @@ void solve_with_time_control_eight_cores(board b)
 
 	search_time = get_search_time(1.0);
 
+	started_threads = 0;
 	for (i = 0 ; i < 8 ; i++)
 	{
+		if (festival_cancel_requested.load()) break;
 		prepare_work_element(b, search_time, i, helpers + i, we + i);
 		rc[i] = pthread_create(&threads[i], &attr, solve_work_element, &we[i]);
+		if (rc[i] == 0) started_threads++;
 	}
 
-	for (i = 0 ; i < 8 ; i++)
+	for (i = 0 ; i < started_threads ; i++)
 		pthread_join(threads[i], NULL);
 
 	pthread_attr_destroy(&attr); //fastrgv

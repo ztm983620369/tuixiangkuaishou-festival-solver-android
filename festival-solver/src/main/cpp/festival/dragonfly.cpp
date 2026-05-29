@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#include <string.h>
+#include <atomic>
 
 #include "util.h"
 #include "board.h"
@@ -16,6 +18,9 @@
 #include "corral.h"
 #include "fixed_boxes.h"
 #include "debug.h"
+
+extern std::atomic<int> festival_cancel_requested;
+extern char global_fail_reason[50];
 
 dragonfly_node* dragonfly_nodes;
 int dragonfly_nodes_num;
@@ -432,6 +437,10 @@ void dragonfly_search(board b_in, int time_allocation, helper *h)
 	{
 		iter_num++;
 
+		if (festival_cancel_requested.load()) {
+			strcpy(global_fail_reason, "Cancelled");
+			break;
+		}
 		if (any_core_solved) break;
 		
 		if ((int)time(0) > (start_time + time_allocation))

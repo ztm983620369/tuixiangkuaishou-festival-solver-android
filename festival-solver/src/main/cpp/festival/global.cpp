@@ -1,10 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <atomic>
 
 #include "global.h"
 #include "util.h"
 
 char solver_name[100] = "Festival 3.1";
+std::atomic<int> festival_cancel_requested(0);
 
 int time_limit = 600;
 

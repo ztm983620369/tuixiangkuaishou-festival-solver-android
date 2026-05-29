@@ -55,6 +55,10 @@ public final class FestivalSolver {
         return solveNative(levelText, workDir.getAbsolutePath(), timeLimitSec, cores, algorithm, extraMem, saveBest);
     }
 
+    public static void requestCancel() {
+        cancelNative();
+    }
+
     public static String extractPath(String solverOutput) {
         List<String> paths = extractPaths(solverOutput);
         return paths.isEmpty() ? "" : paths.get(0);
@@ -181,4 +185,5 @@ public final class FestivalSolver {
     }
 
     private static native String solveNative(String levelText, String filesDir, int timeLimitSec, int cores, int algorithm, int extraMem, boolean saveBest);
+    private static native void cancelNative();
 }

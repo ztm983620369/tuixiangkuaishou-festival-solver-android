@@ -2,6 +2,7 @@
 #include <time.h>
 #include <string.h>
 #include <stdlib.h>
+#include <atomic>
 
 #include "tree.h"
 #include "engine.h"
@@ -18,6 +19,8 @@
 #include "cycle_deadlock.h"
 #include "stuck.h"
 #include "hf_search.h"
+
+extern std::atomic<int> festival_cancel_requested;
 
 int has_winning_move(tree *t, expansion_data *e, helper *h)
 {
@@ -133,6 +136,10 @@ void FESS(board b, int time_allocation, int search_mode, tree *t, helper *h)
 	{
 		iter_num++;
 
+		if (festival_cancel_requested.load()) {
+			strcpy(global_fail_reason, "Cancelled");
+			break;
+		}
 		if (time_limit_exceeded(time_allocation, local_start_time)) break;
 		if (any_core_solved) break;
 
