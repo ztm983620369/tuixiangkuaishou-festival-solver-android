@@ -32,6 +32,7 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.ArrayAdapter;
+import android.widget.AdapterView;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
@@ -4908,7 +4909,8 @@ public class myGameView extends Activity {
             int selectedExtraMem = selectedSpinnerValue(mFestivalHintExtraMemView, mFestivalExtraMemValues, defaultFestivalExtraMem());
             configureFestivalCapacityOptions();
             updateFestivalSpinner(mFestivalHintCoresView, mFestivalCoreLabels, mFestivalCoreValues, selectedCores, defaultFestivalCores());
-            updateFestivalSpinner(mFestivalHintExtraMemView, mFestivalExtraMemLabels, mFestivalExtraMemValues, selectedExtraMem, defaultFestivalExtraMem());
+            int actualCores = selectedSpinnerValue(mFestivalHintCoresView, mFestivalCoreValues, defaultFestivalCores());
+            refreshFestivalExtraMemOptions(actualCores, selectedExtraMem);
         }
         if (missingCache && !mFestivalHintRunning && mFestivalHintCache == null) {
             setFestivalHintStatus("没有可用缓存，请设置参数后开始求解。");
@@ -4980,6 +4982,7 @@ public class myGameView extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(210)));
 
         loadFestivalHintOptions();
+        attachFestivalCoreSelectionListener();
         setFestivalHintStatus(mFestivalHintStatusText);
         updateFestivalHintOutputView();
 
@@ -5021,6 +5024,22 @@ public class myGameView extends Activity {
         return spinner;
     }
 
+    private void attachFestivalCoreSelectionListener() {
+        if (mFestivalHintCoresView == null) return;
+        mFestivalHintCoresView.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                int cores = selectedSpinnerValue(mFestivalHintCoresView, mFestivalCoreValues, defaultFestivalCores());
+                int selectedExtraMem = selectedSpinnerValue(mFestivalHintExtraMemView, mFestivalExtraMemValues, defaultFestivalExtraMemForCores(cores));
+                refreshFestivalExtraMemOptions(cores, selectedExtraMem);
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+    }
+
     private void updateFestivalSpinner(Spinner spinner, String[] labels, int[] values, int selectedValue, int defaultValue) {
         if (spinner == null) return;
         ArrayAdapter<String> adapter = new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, labels);
@@ -5051,7 +5070,24 @@ public class myGameView extends Activity {
             mFestivalDeviceView.setText("本机能力：CPU " + mFestivalDeviceCapacity.cpuCores + " 核，可用线程最高 "
                     + mFestivalDeviceCapacity.maxSupportedCores + "；内存总量 " + formatMb(mFestivalDeviceCapacity.totalMemMb)
                     + "，当前可用 " + formatMb(mFestivalDeviceCapacity.availMemMb)
-                    + "，额外内存最高 " + mFestivalDeviceCapacity.maxExtraMem);
+                    + "，额外内存最高 " + mFestivalDeviceCapacity.maxExtraMem + "（随线程调整）");
+        }
+    }
+
+    private void refreshFestivalExtraMemOptions(int cores, int selectedValue) {
+        rebuildFestivalExtraMemOptions(cores);
+        updateFestivalSpinner(mFestivalHintExtraMemView, mFestivalExtraMemLabels, mFestivalExtraMemValues,
+                selectedValue, defaultFestivalExtraMemForCores(cores));
+    }
+
+    private void rebuildFestivalExtraMemOptions(int cores) {
+        int maxExtraMem = mFestivalDeviceCapacity == null ? 0
+                : maxExtraMemForDevice(mFestivalDeviceCapacity.totalMemMb, mFestivalDeviceCapacity.availMemMb, cores);
+        mFestivalExtraMemValues = buildFestivalExtraMemValues(maxExtraMem);
+        mFestivalExtraMemLabels = new String[mFestivalExtraMemValues.length];
+        for (int i = 0; i < mFestivalExtraMemValues.length; i++) {
+            int value = mFestivalExtraMemValues[i];
+            mFestivalExtraMemLabels[i] = value + (value == maxExtraMem ? "（当前线程最大）" : "");
         }
     }
 
@@ -5069,7 +5105,7 @@ public class myGameView extends Activity {
         if (totalMemMb <= 0) totalMemMb = 1024;
         if (availMemMb <= 0) availMemMb = Math.max(512, totalMemMb / 2);
         int maxSupportedCores = maxFestivalCoresForCpu(cpuCores);
-        int maxExtraMem = maxExtraMemForDevice(totalMemMb, availMemMb, maxSupportedCores);
+        int maxExtraMem = maxExtraMemForDevice(totalMemMb, availMemMb, 1);
         return new FestivalDeviceCapacity(cpuCores, totalMemMb, availMemMb, maxSupportedCores, maxExtraMem);
     }
 
@@ -5106,10 +5142,10 @@ public class myGameView extends Activity {
     }
 
     private int maxExtraMemForDevice(long totalMemMb, long availMemMb, int cores) {
-        long budgetMb = Math.min(totalMemMb * 2 / 3, availMemMb * 3 / 4);
-        int requiredMb = 384 + cores * 320;
+        long budgetMb = Math.max(512, totalMemMb * 9 / 10);
+        long requiredMb = 512L + cores * 224L;
         int extra = 0;
-        while (extra < 6 && requiredMb * 2 <= budgetMb) {
+        while (extra < 6 && requiredMb * 2L <= budgetMb) {
             requiredMb *= 2;
             extra++;
         }
@@ -5228,7 +5264,8 @@ public class myGameView extends Activity {
         setSpinnerSelectionByValue(mFestivalHintTimeView, FESTIVAL_TIME_VALUES, sp.getInt(PREF_FESTIVAL_TIME, FestivalSolver.DEFAULT_TIME_LIMIT_SEC));
         setSpinnerSelectionByValue(mFestivalHintAlgorithmView, FESTIVAL_ALGORITHM_VALUES, sp.getInt(PREF_FESTIVAL_ALGORITHM, FESTIVAL_ALGORITHM_MULTI));
         setSpinnerSelectionByValue(mFestivalHintCoresView, mFestivalCoreValues, sp.getInt(PREF_FESTIVAL_CORES, defaultFestivalCores()));
-        setSpinnerSelectionByValue(mFestivalHintExtraMemView, mFestivalExtraMemValues, sp.getInt(PREF_FESTIVAL_EXTRA_MEM, defaultFestivalExtraMem()));
+        int cores = selectedSpinnerValue(mFestivalHintCoresView, mFestivalCoreValues, defaultFestivalCores());
+        refreshFestivalExtraMemOptions(cores, sp.getInt(PREF_FESTIVAL_EXTRA_MEM, defaultFestivalExtraMemForCores(cores)));
         if (mFestivalHintSaveBestView != null) {
             mFestivalHintSaveBestView.setChecked(sp.getBoolean(PREF_FESTIVAL_SAVE_BEST, false));
         }
@@ -5247,7 +5284,12 @@ public class myGameView extends Activity {
     }
 
     private int defaultFestivalExtraMem() {
-        return mFestivalDeviceCapacity == null ? 0 : mFestivalDeviceCapacity.maxExtraMem;
+        return defaultFestivalExtraMemForCores(defaultFestivalCores());
+    }
+
+    private int defaultFestivalExtraMemForCores(int cores) {
+        return mFestivalDeviceCapacity == null ? 0
+                : maxExtraMemForDevice(mFestivalDeviceCapacity.totalMemMb, mFestivalDeviceCapacity.availMemMb, cores);
     }
 
     private int selectedSpinnerValue(Spinner spinner, int[] values, int defaultValue) {
@@ -5477,16 +5519,30 @@ public class myGameView extends Activity {
                     }
                     boolean nativeSolved = FestivalSolver.wasSolved(output);
                     List<String> paths = FestivalSolver.extractPaths(output);
-                    if (paths.isEmpty()) {
-                        if (nativeSolved) {
-                            lastError = algorithmName + " 已解出，但没有生成 LURD 路径，请查看原生输出。";
-                            publishProgress(FestivalProgress.status(algorithmName + " 已解出但未生成路径，继续尝试。"));
-                        } else {
-                            lastError = algorithmName + " 未在 " + mOptions.timeLimitSec + " 秒内解出；没有 SOLVED，也没有 LURD 路径。";
-                            publishProgress(FestivalProgress.status(algorithmName + " 超时/未解出，继续尝试。"));
-                        }
-                        continue;
-                    }
+	                    if (paths.isEmpty()) {
+	                        if (nativeSolved) {
+	                            lastError = algorithmName + " 已解出，但没有生成 LURD 路径，请查看原生输出。";
+	                            publishProgress(FestivalProgress.status(algorithmName + " 已解出但未生成路径，继续尝试。"));
+	                        } else {
+	                            int solverTimeSec = FestivalSolver.extractSolverTimeSec(output);
+	                            if (solverTimeSec < 0) {
+	                                solverTimeSec = (int)Math.max(0, elapsedMs / 1000L);
+	                            }
+	                            String reason = FestivalSolver.extractReason(output);
+	                            if (reason.length() == 0) {
+	                                reason = "没有 SOLVED，也没有 LURD 路径";
+	                            }
+	                            boolean timeLimitReached = solverTimeSec >= Math.max(1, mOptions.timeLimitSec - 1);
+	                            if (timeLimitReached) {
+	                                lastError = algorithmName + " 用满 " + mOptions.timeLimitSec + " 秒仍未解出：" + reason;
+	                                publishProgress(FestivalProgress.status(algorithmName + " 时间用满仍未解出，继续尝试。"));
+	                            } else {
+	                                lastError = algorithmName + " 提前结束未解出，用时 " + solverTimeSec + " 秒：" + reason;
+	                                publishProgress(FestivalProgress.status(algorithmName + " 提前结束未解出，继续尝试。"));
+	                            }
+	                        }
+	                        continue;
+	                    }
                     if (!nativeSolved) {
                         lastError = algorithmName + " 未完成：Festival 没有打印 SOLVED，输出的 Solution 是 best/中间路径。";
                         publishProgress(FestivalProgress.output("[未完成] Festival 没有打印 SOLVED，Solution 可能来自保存 best，不能作为提示执行。\n"));

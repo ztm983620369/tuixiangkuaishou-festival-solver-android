@@ -11,6 +11,7 @@ public final class FestivalSolver {
     public static final int[] DEFAULT_ALGORITHMS = {7, AUTO_ALGORITHM, 0, 1, 2, 3, 4, 5, 6};
 
     private static final Pattern LURD_LINE = Pattern.compile("[lurdLURD]+");
+    private static final Pattern SOLVER_TIME = Pattern.compile("Solver time:\\s*(\\d+):(\\d+):(\\d+)");
 
     static {
         System.loadLibrary("festivalcore");
@@ -104,6 +105,47 @@ public final class FestivalSolver {
             }
         }
         return false;
+    }
+
+    public static int extractSolverTimeSec(String solverOutput) {
+        if (solverOutput == null || solverOutput.length() == 0) {
+            return -1;
+        }
+        java.util.regex.Matcher matcher = SOLVER_TIME.matcher(solverOutput);
+        int last = -1;
+        while (matcher.find()) {
+            int hours = parseInt(matcher.group(1));
+            int minutes = parseInt(matcher.group(2));
+            int seconds = parseInt(matcher.group(3));
+            last = hours * 3600 + minutes * 60 + seconds;
+        }
+        return last;
+    }
+
+    public static String extractReason(String solverOutput) {
+        if (solverOutput == null || solverOutput.length() == 0) {
+            return "";
+        }
+        String[] lines = solverOutput.split("\\r?\\n");
+        for (int i = 0; i < lines.length; i++) {
+            if ("[festival reason]".equals(lines[i].trim())) {
+                for (int j = i + 1; j < lines.length; j++) {
+                    String reason = lines[j].trim();
+                    if (reason.length() > 0) {
+                        return reason;
+                    }
+                }
+            }
+        }
+        return "";
+    }
+
+    private static int parseInt(String value) {
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException ex) {
+            return 0;
+        }
     }
 
     private static void addUniquePath(ArrayList<String> paths, String path) {

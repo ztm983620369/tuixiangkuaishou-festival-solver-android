@@ -237,6 +237,18 @@ Java_my_boxman_solver_FestivalSolver_solveNative(
             output += "\n";
         }
     }
+    if (total_levels_solved == 0) {
+        std::string reason = global_fail_reason[0] == '\0' ? "" : global_fail_reason;
+        if (reason.empty() || reason == "Unknown reason") {
+            reason = "Search ended without a solution";
+        }
+        output += "\n[festival reason]\n";
+        output += reason;
+        output += "\n";
+        output += "[festival requested time ";
+        output += std::to_string(safeTime);
+        output += " seconds]\n";
+    }
 
     output += "\n[festival exit code ";
     output += std::to_string(rc);
