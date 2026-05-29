@@ -21,6 +21,7 @@ target_compile_definitions(festivalcore PRIVATE
 
 target_compile_options(festivalcore PRIVATE
         -Os
+        -fsigned-char
         -fpermissive
         -Wno-format
         -Wno-unused-result)
