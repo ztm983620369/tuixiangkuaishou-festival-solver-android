@@ -91,6 +91,7 @@ public class myGameView extends Activity {
 
     private static final int FESTIVAL_ALGORITHM_MULTI = -100;
     private static final int FESTIVAL_EXTRA_MEM_AUTO = -1;
+    private static final int FESTIVAL_EXTRA_MEM_MAX = 6;
     private static final String PREF_FESTIVAL_HINT = "FestivalHint";
     private static final String PREF_FESTIVAL_TIME = "timeLimit";
     private static final String PREF_FESTIVAL_ALGORITHM = "algorithm";
@@ -5283,7 +5284,7 @@ public class myGameView extends Activity {
             mFestivalDeviceView.setText("本机能力：CPU " + mFestivalDeviceCapacity.cpuCores + " 核，可用线程最高 "
                     + mFestivalDeviceCapacity.maxSupportedCores + "；内存总量 " + formatMb(mFestivalDeviceCapacity.totalMemMb)
                     + "，当前可用 " + formatMb(mFestivalDeviceCapacity.availMemMb)
-                    + "，额外内存最高 " + mFestivalDeviceCapacity.maxExtraMem + "（随线程调整）");
+                    + "，额外内存最高 " + mFestivalDeviceCapacity.maxExtraMem + "（不按内存降档）");
         }
     }
 
@@ -5360,14 +5361,7 @@ public class myGameView extends Activity {
     }
 
     private int maxExtraMemForDevice(long totalMemMb, long availMemMb, int cores) {
-        long budgetMb = Math.max(512, totalMemMb * 9 / 10);
-        long requiredMb = 512L + cores * 224L;
-        int extra = 0;
-        while (extra < 6 && requiredMb * 2L <= budgetMb) {
-            requiredMb *= 2;
-            extra++;
-        }
-        return extra;
+        return FESTIVAL_EXTRA_MEM_MAX;
     }
 
     private String formatMb(long value) {
