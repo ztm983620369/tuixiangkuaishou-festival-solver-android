@@ -4934,9 +4934,6 @@ public class myGameView extends Activity {
                 return pushed ? count : -1;
             }
             boolean push = isFestivalHintPush(move);
-            if (pushed && !push) {
-                break;
-            }
             int dir = festivalHintDirection(move);
             int nextManRow = manRow + dr_reDo1[dir];
             int nextManCol = manCol + dc_reDo1[dir];
