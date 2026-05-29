@@ -5503,6 +5503,7 @@ public class myGameView extends Activity {
         mFestivalHintRunning = false;
         m_bBusing = false;
         stopFestivalHintTicker();
+        mFestivalHintPendingAdvance = 0;
         if (bt_Hint != null) {
             bt_Hint.setEnabled(true);
             bt_Hint.setChecked(false);
@@ -5526,9 +5527,8 @@ public class myGameView extends Activity {
             return;
         }
         mFestivalHintCache = new FestivalHintCache(result.levelText, result.path);
-        setFestivalHintStatus("求解成功，已缓存完整路径，正在执行第一个推箱段。");
+        setFestivalHintStatus("求解成功，已缓存完整路径。关闭弹窗后点击提示执行。");
         updateFestivalHintCacheView();
-        applyFestivalHintMove(mFestivalHintCache.remainingPath());
     }
 
     private void onFestivalSolveCancelled() {
