@@ -7,6 +7,7 @@ package my.boxman;
  */
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.AlertDialog;
 import android.app.AlertDialog.Builder;
 import android.content.ComponentName;
@@ -48,6 +49,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.lang.ref.WeakReference;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
@@ -67,6 +69,7 @@ public class myGameView extends Activity {
     private FestivalHintTask mFestivalHintTask;
     private FestivalHintCache mFestivalHintCache;
     private AlertDialog mFestivalHintDialog;
+    private TextView mFestivalDeviceView;
     private TextView mFestivalHintStatusView;
     private TextView mFestivalHintOutputView;
     private TextView mFestivalHintCacheView;
@@ -93,10 +96,11 @@ public class myGameView extends Activity {
     private static final int[] FESTIVAL_TIME_VALUES = {15, 30, 60, 120, 300, 600, 1800, 3600};
     private static final String[] FESTIVAL_ALGORITHM_LABELS = {"工业自动（逐个校验）", "Festival 自动", "算法 7", "算法 0", "算法 1", "算法 2", "算法 3", "算法 4", "算法 5", "算法 6"};
     private static final int[] FESTIVAL_ALGORITHM_VALUES = {FESTIVAL_ALGORITHM_MULTI, FestivalSolver.AUTO_ALGORITHM, 7, 0, 1, 2, 3, 4, 5, 6};
-    private static final String[] FESTIVAL_CORES_LABELS = {"1 线程（低内存）", "2 线程"};
-    private static final int[] FESTIVAL_CORES_VALUES = {1, 2};
-    private static final String[] FESTIVAL_EXTRA_MEM_LABELS = {"0（低内存）", "1（中等）", "2（高内存）"};
-    private static final int[] FESTIVAL_EXTRA_MEM_VALUES = {0, 1, 2};
+    private String[] mFestivalCoreLabels = {"1 线程"};
+    private int[] mFestivalCoreValues = {1};
+    private String[] mFestivalExtraMemLabels = {"0（基础）"};
+    private int[] mFestivalExtraMemValues = {0};
+    private FestivalDeviceCapacity mFestivalDeviceCapacity;
 
     AlertDialog AotoNextDlg;
     AlertDialog exitDlg;
@@ -4899,6 +4903,12 @@ public class myGameView extends Activity {
     private void showFestivalHintDialog(boolean missingCache) {
         if (mFestivalHintDialog == null) {
             mFestivalHintDialog = buildFestivalHintDialog();
+        } else if (!mFestivalHintRunning) {
+            int selectedCores = selectedSpinnerValue(mFestivalHintCoresView, mFestivalCoreValues, defaultFestivalCores());
+            int selectedExtraMem = selectedSpinnerValue(mFestivalHintExtraMemView, mFestivalExtraMemValues, defaultFestivalExtraMem());
+            configureFestivalCapacityOptions();
+            updateFestivalSpinner(mFestivalHintCoresView, mFestivalCoreLabels, mFestivalCoreValues, selectedCores, defaultFestivalCores());
+            updateFestivalSpinner(mFestivalHintExtraMemView, mFestivalExtraMemLabels, mFestivalExtraMemValues, selectedExtraMem, defaultFestivalExtraMem());
         }
         if (missingCache && !mFestivalHintRunning && mFestivalHintCache == null) {
             setFestivalHintStatus("没有可用缓存，请设置参数后开始求解。");
@@ -4915,6 +4925,13 @@ public class myGameView extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(14), dp(10), dp(14), dp(4));
 
+        mFestivalDeviceView = new TextView(this);
+        mFestivalDeviceView.setTextColor(0xffbbbbbb);
+        mFestivalDeviceView.setTextSize(13);
+        mFestivalDeviceView.setPadding(0, 0, 0, dp(4));
+        root.addView(mFestivalDeviceView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         mFestivalHintCacheView = new TextView(this);
         mFestivalHintCacheView.setTextColor(0xffeeeeee);
         mFestivalHintCacheView.setTextSize(14);
@@ -4930,8 +4947,10 @@ public class myGameView extends Activity {
 
         mFestivalHintTimeView = addFestivalSpinner(root, "时间限制", FESTIVAL_TIME_LABELS);
         mFestivalHintAlgorithmView = addFestivalSpinner(root, "求解算法", FESTIVAL_ALGORITHM_LABELS);
-        mFestivalHintCoresView = addFestivalSpinner(root, "线程数量", FESTIVAL_CORES_LABELS);
-        mFestivalHintExtraMemView = addFestivalSpinner(root, "额外内存", FESTIVAL_EXTRA_MEM_LABELS);
+        configureFestivalCapacityOptions();
+
+        mFestivalHintCoresView = addFestivalSpinner(root, "线程数量", mFestivalCoreLabels);
+        mFestivalHintExtraMemView = addFestivalSpinner(root, "额外内存", mFestivalExtraMemLabels);
 
         mFestivalHintSaveBestView = new CheckBox(this);
         mFestivalHintSaveBestView.setText("保存 best（仅诊断）");
@@ -5000,6 +5019,108 @@ public class myGameView extends Activity {
         root.addView(row, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return spinner;
+    }
+
+    private void updateFestivalSpinner(Spinner spinner, String[] labels, int[] values, int selectedValue, int defaultValue) {
+        if (spinner == null) return;
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, labels);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+        if (!setSpinnerSelectionByValue(spinner, values, selectedValue)) {
+            setSpinnerSelectionByValue(spinner, values, defaultValue);
+        }
+    }
+
+    private void configureFestivalCapacityOptions() {
+        mFestivalDeviceCapacity = detectFestivalDeviceCapacity();
+        mFestivalCoreValues = buildFestivalCoreValues(mFestivalDeviceCapacity.cpuCores);
+        mFestivalCoreLabels = new String[mFestivalCoreValues.length];
+        for (int i = 0; i < mFestivalCoreValues.length; i++) {
+            int cores = mFestivalCoreValues[i];
+            mFestivalCoreLabels[i] = cores + " 线程" + (cores == mFestivalDeviceCapacity.maxSupportedCores ? "（本机最大）" : "");
+        }
+
+        mFestivalExtraMemValues = buildFestivalExtraMemValues(mFestivalDeviceCapacity.maxExtraMem);
+        mFestivalExtraMemLabels = new String[mFestivalExtraMemValues.length];
+        for (int i = 0; i < mFestivalExtraMemValues.length; i++) {
+            int value = mFestivalExtraMemValues[i];
+            mFestivalExtraMemLabels[i] = value + (value == mFestivalDeviceCapacity.maxExtraMem ? "（本机最大）" : "");
+        }
+
+        if (mFestivalDeviceView != null) {
+            mFestivalDeviceView.setText("本机能力：CPU " + mFestivalDeviceCapacity.cpuCores + " 核，可用线程最高 "
+                    + mFestivalDeviceCapacity.maxSupportedCores + "；内存总量 " + formatMb(mFestivalDeviceCapacity.totalMemMb)
+                    + "，当前可用 " + formatMb(mFestivalDeviceCapacity.availMemMb)
+                    + "，额外内存最高 " + mFestivalDeviceCapacity.maxExtraMem);
+        }
+    }
+
+    private FestivalDeviceCapacity detectFestivalDeviceCapacity() {
+        int cpuCores = Math.max(1, Runtime.getRuntime().availableProcessors());
+        long totalMemMb = 0;
+        long availMemMb = 0;
+        ActivityManager manager = (ActivityManager)getSystemService(Context.ACTIVITY_SERVICE);
+        if (manager != null) {
+            ActivityManager.MemoryInfo info = new ActivityManager.MemoryInfo();
+            manager.getMemoryInfo(info);
+            totalMemMb = info.totalMem / (1024L * 1024L);
+            availMemMb = info.availMem / (1024L * 1024L);
+        }
+        if (totalMemMb <= 0) totalMemMb = 1024;
+        if (availMemMb <= 0) availMemMb = Math.max(512, totalMemMb / 2);
+        int maxSupportedCores = maxFestivalCoresForCpu(cpuCores);
+        int maxExtraMem = maxExtraMemForDevice(totalMemMb, availMemMb, maxSupportedCores);
+        return new FestivalDeviceCapacity(cpuCores, totalMemMb, availMemMb, maxSupportedCores, maxExtraMem);
+    }
+
+    private int[] buildFestivalCoreValues(int cpuCores) {
+        int[] supported = {1, 2, 4, 8};
+        ArrayList<Integer> values = new ArrayList<Integer>();
+        for (int value : supported) {
+            if (value <= cpuCores) {
+                values.add(value);
+            }
+        }
+        if (values.isEmpty()) values.add(1);
+        int[] out = new int[values.size()];
+        for (int i = 0; i < values.size(); i++) {
+            out[i] = values.get(i);
+        }
+        return out;
+    }
+
+    private int[] buildFestivalExtraMemValues(int maxExtraMem) {
+        int safeMax = Math.max(0, Math.min(6, maxExtraMem));
+        int[] out = new int[safeMax + 1];
+        for (int i = 0; i <= safeMax; i++) {
+            out[i] = i;
+        }
+        return out;
+    }
+
+    private int maxFestivalCoresForCpu(int cpuCores) {
+        if (cpuCores >= 8) return 8;
+        if (cpuCores >= 4) return 4;
+        if (cpuCores >= 2) return 2;
+        return 1;
+    }
+
+    private int maxExtraMemForDevice(long totalMemMb, long availMemMb, int cores) {
+        long budgetMb = Math.min(totalMemMb * 2 / 3, availMemMb * 3 / 4);
+        int requiredMb = 384 + cores * 320;
+        int extra = 0;
+        while (extra < 6 && requiredMb * 2 <= budgetMb) {
+            requiredMb *= 2;
+            extra++;
+        }
+        return extra;
+    }
+
+    private String formatMb(long value) {
+        if (value >= 1024) {
+            return String.format(Locale.US, "%.1fGB", value / 1024.0d);
+        }
+        return value + "MB";
     }
 
     private void configureFestivalHintDialogButtons() {
@@ -5085,8 +5206,9 @@ public class myGameView extends Activity {
         FestivalHintOptions options = new FestivalHintOptions();
         options.timeLimitSec = selectedSpinnerValue(mFestivalHintTimeView, FESTIVAL_TIME_VALUES, FestivalSolver.DEFAULT_TIME_LIMIT_SEC);
         options.algorithm = selectedSpinnerValue(mFestivalHintAlgorithmView, FESTIVAL_ALGORITHM_VALUES, FESTIVAL_ALGORITHM_MULTI);
-        options.cores = selectedSpinnerValue(mFestivalHintCoresView, FESTIVAL_CORES_VALUES, 1);
-        options.extraMem = selectedSpinnerValue(mFestivalHintExtraMemView, FESTIVAL_EXTRA_MEM_VALUES, 0);
+        options.cores = selectedSpinnerValue(mFestivalHintCoresView, mFestivalCoreValues, defaultFestivalCores());
+        options.extraMem = selectedSpinnerValue(mFestivalHintExtraMemView, mFestivalExtraMemValues, defaultFestivalExtraMem());
+        options.deviceSummary = festivalDeviceSummary();
         options.saveBest = mFestivalHintSaveBestView != null && mFestivalHintSaveBestView.isChecked();
         return options;
     }
@@ -5105,11 +5227,27 @@ public class myGameView extends Activity {
         SharedPreferences sp = getSharedPreferences(PREF_FESTIVAL_HINT, Context.MODE_PRIVATE);
         setSpinnerSelectionByValue(mFestivalHintTimeView, FESTIVAL_TIME_VALUES, sp.getInt(PREF_FESTIVAL_TIME, FestivalSolver.DEFAULT_TIME_LIMIT_SEC));
         setSpinnerSelectionByValue(mFestivalHintAlgorithmView, FESTIVAL_ALGORITHM_VALUES, sp.getInt(PREF_FESTIVAL_ALGORITHM, FESTIVAL_ALGORITHM_MULTI));
-        setSpinnerSelectionByValue(mFestivalHintCoresView, FESTIVAL_CORES_VALUES, sp.getInt(PREF_FESTIVAL_CORES, 1));
-        setSpinnerSelectionByValue(mFestivalHintExtraMemView, FESTIVAL_EXTRA_MEM_VALUES, sp.getInt(PREF_FESTIVAL_EXTRA_MEM, 0));
+        setSpinnerSelectionByValue(mFestivalHintCoresView, mFestivalCoreValues, sp.getInt(PREF_FESTIVAL_CORES, defaultFestivalCores()));
+        setSpinnerSelectionByValue(mFestivalHintExtraMemView, mFestivalExtraMemValues, sp.getInt(PREF_FESTIVAL_EXTRA_MEM, defaultFestivalExtraMem()));
         if (mFestivalHintSaveBestView != null) {
             mFestivalHintSaveBestView.setChecked(sp.getBoolean(PREF_FESTIVAL_SAVE_BEST, false));
         }
+    }
+
+    private String festivalDeviceSummary() {
+        if (mFestivalDeviceCapacity == null) return "未检测";
+        return "CPU " + mFestivalDeviceCapacity.cpuCores + " 核 / 线程上限 " + mFestivalDeviceCapacity.maxSupportedCores
+                + " / 内存 " + formatMb(mFestivalDeviceCapacity.totalMemMb)
+                + " / 当前可用 " + formatMb(mFestivalDeviceCapacity.availMemMb)
+                + " / 额外内存上限 " + mFestivalDeviceCapacity.maxExtraMem;
+    }
+
+    private int defaultFestivalCores() {
+        return mFestivalDeviceCapacity == null ? 1 : mFestivalDeviceCapacity.maxSupportedCores;
+    }
+
+    private int defaultFestivalExtraMem() {
+        return mFestivalDeviceCapacity == null ? 0 : mFestivalDeviceCapacity.maxExtraMem;
     }
 
     private int selectedSpinnerValue(Spinner spinner, int[] values, int defaultValue) {
@@ -5119,15 +5257,25 @@ public class myGameView extends Activity {
         return values[position];
     }
 
-    private void setSpinnerSelectionByValue(Spinner spinner, int[] values, int value) {
-        if (spinner == null) return;
+    private boolean setSpinnerSelectionByValue(Spinner spinner, int[] values, int value) {
+        if (spinner == null) return false;
         for (int i = 0; i < values.length; i++) {
             if (values[i] == value) {
                 spinner.setSelection(i, true);
-                return;
+                return true;
             }
         }
-        spinner.setSelection(0, true);
+        for (int i = values.length - 1; i >= 0; i--) {
+            if (values[i] <= value) {
+                spinner.setSelection(i, true);
+                return true;
+            }
+        }
+        if (values.length > 0) {
+            spinner.setSelection(0, true);
+            return true;
+        }
+        return false;
     }
 
     private void onFestivalProgress(FestivalProgress progress) {
@@ -5424,6 +5572,7 @@ public class myGameView extends Activity {
         int algorithm;
         int cores;
         int extraMem;
+        String deviceSummary;
         boolean saveBest;
 
         int[] algorithms() {
@@ -5438,7 +5587,24 @@ public class myGameView extends Activity {
                     + "算法: " + algorithmName(algorithm) + "\n"
                     + "线程: " + cores + "\n"
                     + "额外内存: " + extraMem + "\n"
+                    + "设备: " + (deviceSummary == null ? "未检测" : deviceSummary) + "\n"
                     + "保存 best: " + (saveBest ? "是（仅诊断，不作为提示）" : "否");
+        }
+    }
+
+    private static class FestivalDeviceCapacity {
+        final int cpuCores;
+        final long totalMemMb;
+        final long availMemMb;
+        final int maxSupportedCores;
+        final int maxExtraMem;
+
+        FestivalDeviceCapacity(int cpuCores, long totalMemMb, long availMemMb, int maxSupportedCores, int maxExtraMem) {
+            this.cpuCores = cpuCores;
+            this.totalMemMb = totalMemMb;
+            this.availMemMb = availMemMb;
+            this.maxSupportedCores = maxSupportedCores;
+            this.maxExtraMem = maxExtraMem;
         }
     }
 

@@ -11,8 +11,8 @@ android {
         applicationId "my.boxman"
         minSdk 23
         targetSdk 28
-        versionCode 14
-        versionName "9.89-festival-timeout-status"
+        versionCode 15
+        versionName "9.89-festival-device-capacity"
     }
 }
 

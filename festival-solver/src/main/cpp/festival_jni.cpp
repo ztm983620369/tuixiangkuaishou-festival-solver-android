@@ -27,6 +27,13 @@ extern int global_total_moves;
 
 static std::mutex solver_mutex;
 
+static int normalize_cores(int requested) {
+    if (requested >= 8) return 8;
+    if (requested >= 4) return 4;
+    if (requested >= 2) return 2;
+    return 1;
+}
+
 static std::string from_jstring(JNIEnv *env, jstring value) {
     if (value == nullptr) return "";
     const char *chars = env->GetStringUTFChars(value, nullptr);
@@ -145,8 +152,8 @@ Java_my_boxman_solver_FestivalSolver_solveNative(
     if (level.empty()) return env->NewStringUTF("Missing level text");
 
     int safeTime = std::max(1, std::min(3600, static_cast<int>(timeLimitSec)));
-    int safeCores = std::max(1, std::min(2, static_cast<int>(requestedCores)));
-    int safeExtraMem = std::max(0, std::min(2, static_cast<int>(extraMem)));
+    int safeCores = normalize_cores(static_cast<int>(requestedCores));
+    int safeExtraMem = std::max(0, std::min(6, static_cast<int>(extraMem)));
 
     std::string inputPath = dir + "/festival-input.sok";
     std::string outputPath = dir + "/festival-output.sok";
