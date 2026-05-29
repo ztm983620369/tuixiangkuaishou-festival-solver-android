@@ -1,6 +1,8 @@
 package my.boxman.solver;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Pattern;
 
 public final class FestivalSolver {
@@ -19,6 +21,9 @@ public final class FestivalSolver {
 
     public static synchronized String solvePath(String levelText, File workDir, int timeLimitSec) {
         String output = solveText(levelText, workDir, timeLimitSec, 7);
+        if (!wasSolved(output)) {
+            throw new IllegalStateException(trimMessage(output));
+        }
         String path = extractPath(output);
         if (path.length() == 0) {
             throw new IllegalStateException(trimMessage(output));
@@ -50,8 +55,14 @@ public final class FestivalSolver {
     }
 
     public static String extractPath(String solverOutput) {
+        List<String> paths = extractPaths(solverOutput);
+        return paths.isEmpty() ? "" : paths.get(0);
+    }
+
+    public static List<String> extractPaths(String solverOutput) {
+        ArrayList<String> paths = new ArrayList<String>();
         if (solverOutput == null || solverOutput.length() == 0) {
-            return "";
+            return paths;
         }
 
         String[] lines = solverOutput.split("\\r?\\n");
@@ -65,7 +76,9 @@ public final class FestivalSolver {
             }
             if (LURD_LINE.matcher(s).matches()) {
                 if (afterSolutionMarker) {
-                    return s;
+                    addUniquePath(paths, s);
+                    afterSolutionMarker = false;
+                    continue;
                 }
                 if (s.length() > fallback.length()) {
                     fallback = s;
@@ -74,7 +87,32 @@ public final class FestivalSolver {
                 afterSolutionMarker = false;
             }
         }
-        return fallback;
+        if (paths.isEmpty() && fallback.length() > 0) {
+            paths.add(fallback);
+        }
+        return paths;
+    }
+
+    public static boolean wasSolved(String solverOutput) {
+        if (solverOutput == null || solverOutput.length() == 0) {
+            return false;
+        }
+        String[] lines = solverOutput.split("\\r?\\n");
+        for (String line : lines) {
+            if ("SOLVED!".equals(line.trim())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void addUniquePath(ArrayList<String> paths, String path) {
+        for (String item : paths) {
+            if (item.equals(path)) {
+                return;
+            }
+        }
+        paths.add(path);
     }
 
     private static String trimMessage(String output) {

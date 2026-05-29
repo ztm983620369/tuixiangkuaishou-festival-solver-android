@@ -54,6 +54,7 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Queue;
 import java.util.regex.Matcher;
@@ -4933,7 +4934,7 @@ public class myGameView extends Activity {
         mFestivalHintExtraMemView = addFestivalSpinner(root, "额外内存", FESTIVAL_EXTRA_MEM_LABELS);
 
         mFestivalHintSaveBestView = new CheckBox(this);
-        mFestivalHintSaveBestView.setText("保存原生 best 解");
+        mFestivalHintSaveBestView.setText("保存 best（仅诊断）");
         mFestivalHintSaveBestView.setTextColor(0xffeeeeee);
         root.addView(mFestivalHintSaveBestView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -5326,20 +5327,43 @@ public class myGameView extends Activity {
                     if (isCancelled()) {
                         return FestivalSolveResult.cancelled(mLevelText);
                     }
-                    String path = FestivalSolver.extractPath(output);
-                    if (path.length() == 0) {
+                    boolean nativeSolved = FestivalSolver.wasSolved(output);
+                    List<String> paths = FestivalSolver.extractPaths(output);
+                    if (paths.isEmpty()) {
                         lastError = "未输出 LURD 路径：" + FestivalSolver.trimSolverMessage(output);
                         publishProgress(FestivalProgress.status(algorithmName + " 未返回路径，继续尝试。"));
                         continue;
                     }
-                    ValidationResult validation = validateSolutionPath(mStartBoard, path);
-                    if (validation.valid) {
-                        publishProgress(FestivalProgress.status(algorithmName + " 通过完整路径校验，移动 " + validation.path.length() + " 步。"));
-                        return FestivalSolveResult.solved(mLevelText, validation.path);
+                    if (!nativeSolved) {
+                        lastError = algorithmName + " 未完成：Festival 没有打印 SOLVED，输出的 Solution 是 best/中间路径。";
+                        publishProgress(FestivalProgress.output("[未完成] Festival 没有打印 SOLVED，Solution 可能来自保存 best，不能作为提示执行。\n"));
                     }
-                    lastError = algorithmName + " 校验失败：" + validation.error;
-                    publishProgress(FestivalProgress.output("[校验失败] " + validation.error + "\n"));
-                    publishProgress(FestivalProgress.status(algorithmName + " 校验失败，继续尝试。"));
+                    String validationError = null;
+                    for (int pathIndex = 0; pathIndex < paths.size(); pathIndex++) {
+                        String path = paths.get(pathIndex);
+                        ValidationResult validation = validateSolutionPath(mStartBoard, path);
+                        if (nativeSolved && validation.valid) {
+                            publishProgress(FestivalProgress.status(algorithmName + " 通过完整路径校验，移动 " + validation.path.length() + " 步。"));
+                            return FestivalSolveResult.solved(mLevelText, validation.path);
+                        }
+                        String prefix = paths.size() > 1 ? "候选 " + (pathIndex + 1) + "/" + paths.size() + " " : "";
+                        if (validation.valid) {
+                            validationError = "Festival 未确认 SOLVED，已拒绝执行";
+                            publishProgress(FestivalProgress.output("[拒绝] " + prefix + "本地可完成，但 Festival 没有打印 SOLVED，不能作为提示执行。\n"));
+                        } else {
+                            validationError = validation.error;
+                            publishProgress(FestivalProgress.output("[校验失败] " + prefix + validation.error + "\n"));
+                        }
+                    }
+                    if (!nativeSolved) {
+                        if (validationError != null && validationError.length() > 0) {
+                            lastError = algorithmName + " 未完成：Festival 没有打印 SOLVED；本地校验：" + validationError;
+                        }
+                        publishProgress(FestivalProgress.status(algorithmName + " 未真正解出，继续尝试。"));
+                    } else {
+                        lastError = algorithmName + " 校验失败：" + validationError;
+                        publishProgress(FestivalProgress.status(algorithmName + " 校验失败，继续尝试。"));
+                    }
                 } catch (Throwable ex) {
                     lastError = ex.getMessage();
                     if (lastError == null || lastError.length() == 0) {
@@ -5409,7 +5433,7 @@ public class myGameView extends Activity {
                     + "算法: " + algorithmName(algorithm) + "\n"
                     + "线程: " + cores + "\n"
                     + "额外内存: " + extraMem + "\n"
-                    + "保存 best: " + (saveBest ? "是" : "否");
+                    + "保存 best: " + (saveBest ? "是（仅诊断，不作为提示）" : "否");
         }
     }
 
@@ -5579,7 +5603,7 @@ public class myGameView extends Activity {
         }
 
         if (!pushed) return ValidationResult.error("求解路径没有推动箱子！");
-        if (boxesOnTargets != targets) return ValidationResult.error("求解路径未完成关卡！");
+        if (boxesOnTargets != targets) return ValidationResult.error("求解路径未完成关卡（目标 " + boxesOnTargets + "/" + targets + "）！");
         return ValidationResult.valid(canonicalPath.toString());
     }
 
