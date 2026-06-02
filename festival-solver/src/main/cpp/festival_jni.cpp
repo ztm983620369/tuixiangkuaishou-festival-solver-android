@@ -60,6 +60,57 @@ static std::string read_text_file(const std::string &path) {
     return buffer.str();
 }
 
+static std::string trim_line(std::string line) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    const size_t start = line.find_first_not_of(" \t");
+    if (start == std::string::npos) return "";
+    const size_t end = line.find_last_not_of(" \t");
+    return line.substr(start, end - start + 1);
+}
+
+static bool is_solved_marker_line(std::string line) {
+    line = trim_line(line);
+    return line == "SOLVED!" || line.rfind("SOLVED! ", 0) == 0;
+}
+
+static bool contains_solved_marker(const std::string &text) {
+    std::istringstream lines(text);
+    std::string line;
+    while (std::getline(lines, line)) {
+        if (is_solved_marker_line(line)) return true;
+    }
+    return false;
+}
+
+static bool is_lurd_line(const std::string &line) {
+    if (line.empty()) return false;
+    for (char c : line) {
+        if (c != 'l' && c != 'u' && c != 'r' && c != 'd'
+                && c != 'L' && c != 'U' && c != 'R' && c != 'D') {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool contains_solution_path(const std::string &text) {
+    std::istringstream lines(text);
+    std::string line;
+    bool afterSolution = false;
+    while (std::getline(lines, line)) {
+        std::string s = trim_line(line);
+        if (s == "Solution") {
+            afterSolution = true;
+            continue;
+        }
+        if (afterSolution) {
+            if (is_lurd_line(s)) return true;
+            if (!s.empty()) afterSolution = false;
+        }
+    }
+    return false;
+}
+
 class StdioRedirect {
 public:
     explicit StdioRedirect(const std::string &path) {
@@ -200,12 +251,16 @@ Java_my_boxman_solver_FestivalSolver_solveNative(
 
     int rc = -1;
     std::string output;
+    bool nativeSolved = false;
+    bool solvedMarkerInConsole = false;
     try {
         StdioRedirect redirect(consolePath);
         rc = festival_cli_main(static_cast<int>(argv.size()), argv.data());
         redirect.restore();
         std::string consoleOutput = read_text_file(consolePath);
         std::string solutionOutput = read_text_file(outputPath);
+        solvedMarkerInConsole = contains_solved_marker(consoleOutput);
+        nativeSolved = solvedMarkerInConsole || (saveBest != JNI_TRUE && contains_solution_path(solutionOutput));
         if (!consoleOutput.empty()) {
             output += "[festival console]\n";
             output += consoleOutput;
@@ -214,6 +269,10 @@ Java_my_boxman_solver_FestivalSolver_solveNative(
             if (!output.empty()) output += "\n";
             output += "[festival solution]\n";
             output += solutionOutput;
+        }
+        if (nativeSolved && !solvedMarkerInConsole) {
+            if (!output.empty()) output += "\n";
+            output += "[festival status]\nSOLVED!\n";
         }
     } catch (const std::exception &e) {
         std::string consoleOutput = read_text_file(consolePath);
@@ -240,7 +299,7 @@ Java_my_boxman_solver_FestivalSolver_solveNative(
             output += "\n";
         }
     }
-    if (total_levels_solved == 0) {
+    if (!nativeSolved) {
         std::string reason = global_fail_reason[0] == '\0' ? "" : global_fail_reason;
         if (reason.empty() || reason == "Unknown reason") {
             reason = "Search ended without a solution";

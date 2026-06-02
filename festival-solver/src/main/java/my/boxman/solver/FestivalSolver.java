@@ -104,7 +104,8 @@ public final class FestivalSolver {
         }
         String[] lines = solverOutput.split("\\r?\\n");
         for (String line : lines) {
-            if ("SOLVED!".equals(line.trim())) {
+            String s = line.trim();
+            if ("SOLVED!".equals(s) || s.startsWith("SOLVED! ")) {
                 return true;
             }
         }
